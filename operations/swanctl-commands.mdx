@@ -127,8 +127,10 @@ Each nested CHILD_SA entry shows:
 | `swanctl --counters` | Show global IKE event counters. |
 | `swanctl --counters --name <conn>` | Show per-connection event counters. |
 | `swanctl --counters --all` | Show counters for all tracked connections. |
-| `swanctl --counters --reset` | Reset all counters to zero. |
+| `swanctl --counters --reset` | Reset global counters to zero. |
+| `swanctl --counters --all --reset` | Reset counters for all connections. |
 | `swanctl --log` | Stream live log output from charon (levels 0 and 1 only). |
+| `swanctl --monitor-sa` | Monitor IKE_SA and CHILD_SA changes in real time. |
 
 ### Example: `swanctl --stats`
 
@@ -147,6 +149,7 @@ Worker thread priority levels (from the source) are **critical / high / medium /
 
 | Command | Description |
 |---|---|
-| `swanctl --install` | Install a trap or shunt policy. |
+| `swanctl --install` | Install a trap or shunt policy for a CHILD_SA config. |
+| `swanctl --uninstall` | Uninstall a previously installed trap or shunt policy. |
 | `swanctl --flush-certs [--type <type>]` | Flush cached certificates. |
 | `swanctl --version` | Show swanctl and charon version information. |

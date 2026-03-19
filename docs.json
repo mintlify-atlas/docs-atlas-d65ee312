@@ -161,7 +161,8 @@
               "reference/pki/req",
               "reference/pki/signcrl",
               "reference/pki/print",
-              "reference/pki/verify"
+              "reference/pki/verify",
+              "reference/pki/pkcs12"
             ]
           },
           {

@@ -1,0 +1,88 @@
+---
+title: "pki --pkcs12"
+description: List or export credentials from a PKCS#12 container.
+sidebarTitle: "--pkcs12"
+---
+
+`pki --pkcs12` reads a PKCS#12 (`.p12` / `.pfx`) container and either lists its contents or exports individual credentials.
+
+<Note>
+To **create** a PKCS#12 container from strongSwan-issued certificates and keys, use the `openssl pkcs12` command. The `pki --pkcs12` command is for reading and extracting credentials from existing containers.
+</Note>
+
+## Synopsis
+
+```bash
+pki --pkcs12 --list [--in <file>]
+pki --pkcs12 --export <index> [--in <file>] [--outform <format>]
+```
+
+## Options
+
+<ParamField path="--list" type="boolean">
+  List all certificates and keys stored in the PKCS#12 container, including their index numbers.
+</ParamField>
+
+<ParamField path="--export" type="integer">
+  Export the credential at the specified index (as shown by `--list`). The output is a certificate or private key in the format specified by `--outform`.
+</ParamField>
+
+<ParamField path="--in" type="string">
+  Path to the PKCS#12 input file. If omitted, input is read from stdin.
+</ParamField>
+
+<ParamField path="--outform" type="string" default="der">
+  Encoding format for the exported credential. Accepted values: `pem`, `der`.
+</ParamField>
+
+## Examples
+
+### List contents of a PKCS#12 container
+
+```bash
+pki --pkcs12 --list --in carolCert.p12
+```
+
+Example output:
+
+```
+0: C=CH, O=strongSwan, CN=carol@strongswan.org
+1: C=CH, O=strongSwan, CN=strongSwan Root CA
+2: [private key]
+```
+
+### Export a certificate from a container
+
+```bash
+# Export the end-entity certificate (index 0) as PEM
+pki --pkcs12 --export 0 --in carolCert.p12 --outform pem > carolCert.pem
+```
+
+### Export the private key from a container
+
+```bash
+# Export the private key (index 2) as PEM
+pki --pkcs12 --export 2 --in carolCert.p12 --outform pem > carolKey.pem
+```
+
+## Creating PKCS#12 containers
+
+To bundle a certificate, private key, and CA certificate for import into a VPN client:
+
+```bash
+openssl pkcs12 -export \
+  -inkey carolKey.pem \
+  -in carolCert.pem \
+  -name "carol" \
+  -certfile strongswanCert.pem \
+  -caname "strongSwan Root CA" \
+  -out carolCert.p12
+```
+
+The resulting `.p12` file can be imported on Windows, macOS, iOS, and Android devices.
+
+## See also
+
+- [`pki --gen`](/reference/pki/gen) — generate a private key
+- [`pki --issue`](/reference/pki/issue) — issue a signed certificate
+- [`pki --print`](/reference/pki/print) — print certificate information

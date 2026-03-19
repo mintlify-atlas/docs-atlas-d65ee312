@@ -69,10 +69,6 @@ pki --self --in <key> --dn <dn> [options]
   OCSP responder URI to embed in the certificate. Can be specified multiple times.
 </ParamField>
 
-<ParamField path="--crl" type="string">
-  CRL Distribution Point URI to embed. Can be specified multiple times.
-</ParamField>
-
 <ParamField path="--digest" type="string">
   Digest algorithm to use for the signature (e.g. `sha256`, `sha384`, `sha512`). Defaults to a digest appropriate for the key type.
 </ParamField>
@@ -83,10 +79,6 @@ pki --self --in <key> --dn <dn> [options]
 
 <ParamField path="--outform" type="string" default="der">
   Output encoding format. Accepted values: `pem`, `der`.
-</ParamField>
-
-<ParamField path="--out" type="string">
-  Write the certificate to the specified file path. If omitted, output goes to stdout.
 </ParamField>
 
 ## Examples

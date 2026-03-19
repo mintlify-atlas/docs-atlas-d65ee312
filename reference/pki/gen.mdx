@@ -27,7 +27,7 @@ pki --gen [--type <type>] [--size <bits>] [--safe-primes] [--shares <n>] [--thre
 
   Default sizes when omitted:
   - RSA: `2048`
-  - ECDSA: `256`
+  - ECDSA: `384`
 
   Common values:
   - RSA: `2048`, `3072`, `4096`
@@ -47,11 +47,7 @@ pki --gen [--type <type>] [--size <bits>] [--safe-primes] [--shares <n>] [--thre
 </ParamField>
 
 <ParamField path="--outform" type="string" default="der">
-  Output encoding format. Accepted values: `pem`, `der`.
-</ParamField>
-
-<ParamField path="--out" type="string">
-  Write the key to the specified file path. If omitted, the key is written to stdout.
+  Output encoding format. Accepted values: `pem`, `der`. Output is written to stdout; redirect with `>` to save to a file.
 </ParamField>
 
 ## Examples
@@ -74,10 +70,10 @@ Generate a 384-bit ECDSA key:
 pki --gen --type ecdsa --size 384 --outform pem > moonKey.pem
 ```
 
-Generate a key and write it directly to a file:
+Generate a 4096-bit RSA key:
 
 ```bash
-pki --gen --type rsa --size 4096 --outform pem --out strongswanKey.pem
+pki --gen --type rsa --size 4096 --outform pem > strongswanKey.pem
 ```
 
 <Tip>

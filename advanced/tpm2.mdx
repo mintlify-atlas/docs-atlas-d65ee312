@@ -107,7 +107,7 @@ strongSwan discovers TPM-resident keys automatically when the `tpm` plugin is lo
 
 ## Configuration in swanctl.conf
 
-Reference the TPM key by its persistent handle in the `private` section using a token `handle`:
+Reference the TPM key in the `secrets` section using a `token` subsection. The `handle` field takes the hex-encoded CKA_ID (for PKCS#11) or TPM persistent handle, and `module` names the PKCS#11 module or TSS integration:
 
 ```text
 # /etc/swanctl/swanctl.conf
@@ -131,16 +131,19 @@ connections {
     }
 }
 
-private {
-    tpm-rsa {
-        # Handle of the persistent key in the TPM Owner hierarchy
-        handle = 0x81000001
-        module = tpm
+secrets {
+    token-tpm-rsa {
+        # Hex-encoded handle of the persistent TPM key (CKA_ID or TPM handle)
+        handle = 81000001
+        # Optional PKCS#11 module name (omit to use the default TPM TSS module)
+        # module = tpm
+        # Optional PIN to access the key
+        # pin = mypin
     }
 }
 ```
 
-The `module = tpm` directive tells strongSwan to look for this handle via the `libtpmtss` plugin rather than a PKCS#11 token or a file on disk.
+The `secrets.token<n>` subsection tells strongSwan to load the private key from a token (smartcard or TPM) rather than from a file on disk. The `handle` is the hex-encoded CKA_ID of the private key on the token.
 
 <Note>
   The certificate referenced in `certs` must correspond to the public key stored at the TPM handle. Generate the certificate using the public key exported in the provisioning steps above.
