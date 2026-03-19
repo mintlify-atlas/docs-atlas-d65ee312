@@ -1,0 +1,208 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "strongSwan",
+  "projectDescription": "strongSwan is an open-source IPsec-based VPN solution implementing IKEv1 and IKEv2 for secure site-to-site and remote access VPN deployments.",
+  "theme": "aspen",
+  "primaryColor": "#040404",
+  "lightColor": "#da0d38",
+  "darkColor": "#504749",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/swanctl-conf",
+              "configuration/strongswan-conf",
+              "configuration/credentials",
+              "configuration/virtual-ip-pools"
+            ]
+          },
+          {
+            "group": "VPN Scenarios",
+            "pages": [
+              "scenarios/site-to-site",
+              "scenarios/host-to-host",
+              "scenarios/roadwarrior",
+              "scenarios/roadwarrior-eap"
+            ]
+          },
+          {
+            "group": "Authentication",
+            "pages": [
+              "authentication/certificates",
+              "authentication/psk",
+              "authentication/eap",
+              "authentication/xauth"
+            ]
+          },
+          {
+            "group": "PKI & Certificates",
+            "pages": [
+              "pki/overview",
+              "pki/ca-setup",
+              "pki/generate-certificates",
+              "pki/crl-management"
+            ]
+          },
+          {
+            "group": "Plugins",
+            "pages": [
+              "plugins/overview",
+              "plugins/kernel-backends",
+              "plugins/crypto-plugins",
+              "plugins/eap-plugins"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/swanctl-commands",
+              "operations/monitoring",
+              "operations/logging",
+              "operations/high-availability"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/tpm2",
+              "advanced/android",
+              "advanced/nat-traversal",
+              "advanced/traffic-selectors"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "VICI Protocol",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "vici/overview",
+              "vici/protocol"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "vici/commands/connection-management",
+              "vici/commands/sa-management",
+              "vici/commands/credential-management",
+              "vici/commands/query-commands"
+            ]
+          },
+          {
+            "group": "Events",
+            "pages": [
+              "vici/events/sa-events",
+              "vici/events/log-events"
+            ]
+          },
+          {
+            "group": "Client Libraries",
+            "pages": [
+              "vici/clients/libvici-c",
+              "vici/clients/python",
+              "vici/clients/ruby",
+              "vici/clients/perl"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "swanctl",
+            "pages": [
+              "reference/swanctl/initiate",
+              "reference/swanctl/terminate",
+              "reference/swanctl/rekey",
+              "reference/swanctl/list-sas",
+              "reference/swanctl/load-all",
+              "reference/swanctl/list-certs"
+            ]
+          },
+          {
+            "group": "pki",
+            "pages": [
+              "reference/pki/gen",
+              "reference/pki/self",
+              "reference/pki/issue",
+              "reference/pki/req",
+              "reference/pki/signcrl",
+              "reference/pki/print",
+              "reference/pki/verify"
+            ]
+          },
+          {
+            "group": "Configuration Reference",
+            "pages": [
+              "reference/swanctl-conf-options",
+              "reference/strongswan-conf-options"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "IKEv1 and IKEv2 protocol support for IPsec VPN tunnels",
+    "swanctl command-line tool for managing VPN connections",
+    "VICI (Versatile IKE Control Interface) for daemon control and monitoring",
+    "Comprehensive PKI toolchain (pki) for certificate and CRL management",
+    "Extensive plugin architecture with 70+ plugins for crypto, EAP, kernel backends",
+    "Support for EAP authentication methods (MD5, MSCHAPv2, TLS, PEAP, RADIUS)",
+    "Virtual IP address pool management for roadwarrior clients",
+    "TPM 2.0 Trusted Platform Module integration for secure key storage",
+    "NetworkManager integration via charon-nm",
+    "Android VPN client support",
+    "High-availability (HA) clustering support"
+  ],
+  "publicApiSurface": [
+    "swanctl --initiate",
+    "swanctl --terminate",
+    "swanctl --rekey",
+    "swanctl --redirect",
+    "swanctl --install",
+    "swanctl --list-sas",
+    "swanctl --list-conns",
+    "swanctl --list-certs",
+    "swanctl --list-pools",
+    "swanctl --load-all",
+    "swanctl --load-conns",
+    "swanctl --load-creds",
+    "swanctl --load-pools",
+    "swanctl --stats",
+    "swanctl --counters",
+    "pki --gen",
+    "pki --self",
+    "pki --issue",
+    "pki --req",
+    "pki --signcrl",
+    "pki --print",
+    "pki --verify",
+    "pki --pkcs12",
+    "vici version()",
+    "vici stats()",
+    "vici initiate()",
+    "vici terminate()",
+    "vici load-conn()",
+    "vici load-cert()",
+    "vici load-key()",
+    "vici list-sas()",
+    "vici get-pools()"
+  ]
+}
