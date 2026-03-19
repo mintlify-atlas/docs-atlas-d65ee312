@@ -1,0 +1,136 @@
+---
+title: "swanctl --load-all"
+description: Load credentials, certificate authorities, IP pools, and connection definitions from swanctl.conf in a single command.
+sidebarTitle: "--load-all"
+---
+
+The `--load-all` command is a convenience wrapper that runs the four individual
+load operations in sequence: credentials, authorities, pools, and connections.
+It is equivalent to running `--load-creds`, `--load-authorities`,
+`--load-pools`, and `--load-conns` one after another.
+
+Run `--load-all` after modifying `swanctl.conf` or after the `charon` daemon
+restarts, to bring the daemon's in-memory state in sync with your configuration
+files.
+
+## Synopsis
+
+```bash
+swanctl --load-all [--clear] [--noprompt] [--file <path>] [--raw|--pretty]
+```
+
+## Options
+
+<ParamField path="--clear" type="boolean">
+  Clear all previously loaded credentials before loading the new set. Without
+  this flag, the daemon merges the new credentials with any already loaded.
+  Use `--clear` when you need to remove credentials that are no longer in the
+  configuration.
+</ParamField>
+
+<ParamField path="--noprompt" type="boolean">
+  Do not prompt for passphrases when loading encrypted private keys. Keys
+  protected by a passphrase are silently skipped. Use this flag in scripts or
+  automated deployments where interactive input is not available.
+</ParamField>
+
+<ParamField path="--file" type="string">
+  Path to a custom `swanctl.conf` file. Defaults to
+  `/etc/swanctl/swanctl.conf`.
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Dump the raw VICI response messages from each sub-operation.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Dump raw VICI responses with pretty-print indentation. Implies `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI. Overrides the default `unix:///var/run/charon.vici`.
+</ParamField>
+
+## What gets loaded
+
+`--load-all` calls the following sub-operations in order. Each step must
+succeed before the next runs.
+
+| Step | Equivalent command | What it does |
+|------|-------------------|--------------|
+| 1 | `--load-creds` | Reads private keys, certificates, and secrets (PSKs, EAP passwords) from `/etc/swanctl/` subdirectories and `swanctl.conf` |
+| 2 | `--load-authorities` | Loads certification authority definitions (trusted CA certs, CRL/OCSP URIs) |
+| 3 | `--load-pools` | Loads virtual IP pool definitions used to assign addresses to road warriors |
+| 4 | `--load-conns` | Loads connection (IKE_SA + CHILD_SA) configurations |
+
+## Examples
+
+### Basic reload after editing swanctl.conf
+
+```bash
+swanctl --load-all
+```
+
+Expected output:
+
+```
+loaded certificate from '/etc/swanctl/x509/moonCert.pem'
+loaded certificate from '/etc/swanctl/x509ca/strongswanCert.pem'
+loaded private key from '/etc/swanctl/private/moonKey.pem'
+loaded authority 'strongswan'
+loaded pool 'rw-pool'
+loaded connection 'net-net'
+loaded connection 'roadwarrior'
+```
+
+### Reload and clear stale credentials
+
+Use `--clear` when certificates have been revoked or removed:
+
+```bash
+swanctl --load-all --clear
+```
+
+### Non-interactive reload in a script or systemd unit
+
+```bash
+swanctl --load-all --noprompt
+```
+
+### Load from a non-default configuration file
+
+```bash
+swanctl --load-all --file /etc/swanctl/testing.conf
+```
+
+## Configuration reload workflow
+
+<Info>
+Changes to `swanctl.conf` are not automatically picked up by `charon`. You
+must run `--load-all` (or one of the individual load commands) after every
+change to apply the new configuration.
+</Info>
+
+A typical workflow after editing the configuration:
+
+1. Edit `/etc/swanctl/swanctl.conf`.
+2. Verify the file parses correctly (no syntax errors).
+3. Run `swanctl --load-all` to apply the changes.
+4. Optionally run `swanctl --list-sas` or `swanctl --list-conns` to confirm
+   the new configuration is active.
+
+Existing established SAs are **not** interrupted by a configuration reload.
+The new configuration only affects subsequently initiated SAs.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All four load operations succeeded |
+| non-zero | One of the load operations failed; subsequent steps are skipped |
+
+## See also
+
+- [`swanctl --list-sas`](/reference/swanctl/list-sas) — verify active SAs after loading
+- [`swanctl --list-certs`](/reference/swanctl/list-certs) — check which certificates were loaded
+- [`swanctl --initiate`](/reference/swanctl/initiate) — bring up a connection after loading config

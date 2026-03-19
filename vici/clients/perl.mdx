@@ -1,0 +1,179 @@
+---
+title: "Perl Vici::Session Module"
+description: "Pure Perl CPAN module for the VICI protocol"
+---
+
+## Overview
+
+The `Vici::Session` Perl CPAN module is a pure-Perl implementation of the VICI protocol. It lives in the `perl/Vici-Session/` subdirectory of the vici plugin source tree. `Vici::Session` provides the high-level interface that maps directly to VICI commands. The auxiliary `Vici::Message` class encodes configuration parameters sent to the daemon and decodes data returned by it. The lower-level `Vici::Packet` and `Vici::Transport` classes handle protocol framing and are not required for typical applications.
+
+## Installation
+
+The module is built and installed when strongSwan is configured with:
+
+```sh
+./configure --enable-vici --enable-perl-cpan
+```
+
+Alternatively, install manually from the `perl/Vici-Session/` directory:
+
+```sh
+perl Makefile.PL
+make
+make install
+```
+
+The module depends only on the standard `IO::Socket::UNIX` module.
+
+## Connecting to the Daemon
+
+<Steps>
+  <Step title="Create the UNIX socket">
+    Open a streaming UNIX domain socket pointed at `/var/run/charon.vici`:
+
+    ```perl
+    use IO::Socket::UNIX;
+
+    my $socket = IO::Socket::UNIX->new(
+        Type => SOCK_STREAM,
+        Peer => '/var/run/charon.vici',
+    ) or die "Vici socket: $!";
+    ```
+  </Step>
+  <Step title="Create the session">
+    Pass the socket to `Vici::Session->new()`:
+
+    ```perl
+    use Vici::Session;
+    use Vici::Message;
+
+    my $session = Vici::Session->new($socket);
+    ```
+  </Step>
+  <Step title="Close when done">
+    Close the socket when the session is no longer needed:
+
+    ```perl
+    close($socket);
+    ```
+  </Step>
+</Steps>
+
+## A Simple Request
+
+Commands that return a single result use plain method calls. The `version()` method returns a `Vici::Message` object; call `->hash()` to get a plain Perl hash reference:
+
+```perl
+my $version = $session->version()->hash();
+
+foreach my $key ('daemon', 'version', 'sysname', 'release', 'machine') {
+    print $version->{$key}, " ";
+}
+```
+
+## Streaming Responses
+
+Commands that stream events return an array reference of `Vici::Message` objects. Iterate over it to process each result:
+
+```perl
+my $conns = $session->list_conns();
+
+foreach my $conn (@$conns) {
+    print $conn->raw(), "\n";
+}
+```
+
+Similarly for active SAs:
+
+```perl
+my $sas = $session->list_sas();
+
+foreach my $sa (@$sas) {
+    print $sa->raw(), "\n";
+}
+```
+
+## Sending Parameters with Vici::Message
+
+Use `Vici::Message->new(\%vars)` to encode a Perl hash as a VICI message to pass to commands:
+
+```perl
+# Initiate a CHILD_SA
+my %vars = ( child => 'net-net' );
+my ($res, $errmsg) = $session->initiate(Vici::Message->new(\%vars));
+print $res ? "ok\n" : "failed: $errmsg\n";
+```
+
+Nested hashes represent VICI sections, and array references represent VICI lists:
+
+```perl
+# Load a connection
+my @local_ts  = ( '10.1.0.0/16' );
+my @remote_ts = ( '10.2.0.0/16' );
+my @esp       = ( 'aes128gcm128-modp3072' );
+
+my %child = (
+    local_ts      => \@local_ts,
+    remote_ts     => \@remote_ts,
+    esp_proposals => \@esp,
+);
+my %children = ( 'net-net' => \%child );
+
+my @local_addrs  = ( '192.168.0.1' );
+my @remote_addrs = ( '192.168.0.2' );
+my @ike          = ( 'aes128-sha256-modp3072' );
+
+my %gw = (
+    version      => 2,
+    mobike       => 'no',
+    proposals    => \@ike,
+    local_addrs  => \@local_addrs,
+    remote_addrs => \@remote_addrs,
+    children     => \%children,
+);
+
+my %vars = ( 'gw-gw' => \%gw );
+my ($res, $errmsg) = $session->load_conn(Vici::Message->new(\%vars));
+print $res ? "ok\n" : "failed: $errmsg\n";
+```
+
+## Module Classes
+
+| Class | Description |
+|---|---|
+| `Vici::Session` | High-level interface. Provides one method per VICI command. |
+| `Vici::Message` | Encodes Perl data structures into VICI binary messages and decodes responses. Use `->new(\%hash)` to create, `->hash()` to decode to a hash ref, and `->raw()` to dump the raw encoding. |
+| `Vici::Packet` | Low-level VICI packet construction. Not required for normal use. |
+| `Vici::Transport` | Low-level socket framing. Not required for normal use. |
+
+## Available Session Methods
+
+| Method | Description |
+|---|---|
+| `version()` | Daemon and system version information. Returns `Vici::Message`. |
+| `stats()` | IKE daemon statistics and load information. Returns `Vici::Message`. |
+| `reload_settings()` | Reload `strongswan.conf` and plugins that support reload. Returns `($ok, $errmsg)`. |
+| `initiate($msg)` | Initiate a CHILD_SA. Returns `($ok, $errmsg)`. |
+| `terminate($msg)` | Terminate an IKE_SA or CHILD_SA. Returns `($ok, $errmsg)`. |
+| `install($msg)` | Install a trap, drop or bypass policy. Returns `($ok, $errmsg)`. |
+| `uninstall($msg)` | Uninstall a policy. Returns `($ok, $errmsg)`. |
+| `list_sas()` | Stream active IKE_SAs and CHILD_SAs. Returns arrayref of `Vici::Message`. |
+| `list_policies($msg)` | Stream installed policies matching the filter. Returns arrayref of `Vici::Message`. |
+| `list_conns()` | Stream all loaded connection configurations. Returns arrayref of `Vici::Message`. |
+| `get_conns()` | Names of connections loaded exclusively over vici. Returns `Vici::Message`. |
+| `list_certs($msg)` | Stream loaded certificates matching the filter. Returns arrayref of `Vici::Message`. |
+| `list_authorities()` | Stream loaded CA definitions. Returns arrayref of `Vici::Message`. |
+| `get_authorities()` | Names of CAs loaded exclusively over vici. Returns `Vici::Message`. |
+| `load_conn($msg)` | Load a connection definition into the daemon. Returns `($ok, $errmsg)`. |
+| `unload_conn($msg)` | Unload a connection definition by name. Returns `($ok, $errmsg)`. |
+| `load_cert($msg)` | Load a PEM or DER certificate. Returns `($ok, $errmsg)`. |
+| `load_key($msg)` | Load a PEM or DER private key. Returns `($ok, $errmsg)`. |
+| `load_shared($msg)` | Load a shared PSK, EAP or XAuth secret. Returns `($ok, $errmsg)`. |
+| `flush_certs($msg)` | Flush the volatile certificate cache. Returns `($ok, $errmsg)`. |
+| `clear_creds()` | Clear all credentials loaded over vici. Returns `($ok, $errmsg)`. |
+| `load_authority($msg)` | Load a CA definition. Returns `($ok, $errmsg)`. |
+| `unload_authority($msg)` | Unload a CA definition by name. Returns `($ok, $errmsg)`. |
+| `load_pool($msg)` | Load a virtual IP and attribute pool. Returns `($ok, $errmsg)`. |
+| `unload_pool($msg)` | Unload a virtual IP pool by name. Returns `($ok, $errmsg)`. |
+| `get_pools()` | List currently loaded pools. Returns `Vici::Message`. |
+| `get_algorithms()` | Currently loaded algorithms and their implementations. Returns `Vici::Message`. |

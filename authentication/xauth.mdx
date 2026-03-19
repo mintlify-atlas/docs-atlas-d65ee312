@@ -1,0 +1,287 @@
+---
+title: "XAuth Authentication"
+description: "Extended Authentication for IKEv1 connections using username and password"
+---
+
+<Warning>
+XAuth is an IKEv1-only feature. For IKEv2 connections, use [EAP authentication](/authentication/eap) instead — it is the standardized equivalent and offers stronger security guarantees.
+</Warning>
+
+XAuth (Extended Authentication, also called Mode Config Authentication) extends IKEv1/ISAKMP with an additional username/password exchange after the initial IKE Phase 1 negotiation completes. It is widely supported by legacy clients including Cisco VPN Client, Apple's built-in IPsec client, and many mobile devices.
+
+## How XAuth Works
+
+1. **Phase 1** completes using either PSK or public key authentication (Main Mode or Aggressive Mode).
+2. The gateway initiates an XAuth exchange, sending a `CFG_REQUEST` payload asking for username and password.
+3. The client responds with a `CFG_REPLY` containing the credentials.
+4. The gateway validates the credentials and sends a `CFG_SET` acknowledging success or failure.
+5. If successful, IKEv1 Phase 2 (CHILD_SA) negotiation proceeds.
+
+## Authentication Modes
+
+| Mode | `local auth` | `remote auth` | Description |
+|---|---|---|---|
+| XAuth (PSK + XAuth) | `psk` | `psk` + XAuth round | PSK Phase 1, then XAuth credentials |
+| Hybrid Mode | `pubkey` | `xauth` | Gateway uses certificate; client uses only XAuth |
+| XAuth + pubkey | `pubkey` | `pubkey` + XAuth round | Both peers use certificates, then XAuth |
+
+## Basic Configuration
+
+<Tabs>
+  <Tab title="Gateway (XAuth + PSK)">
+    ```ini
+    # /etc/swanctl/swanctl.conf
+    connections {
+      ikev1-xauth {
+        version = 1
+
+        local_addrs  = 203.0.113.1
+        remote_addrs = %any
+
+        # Round 1: PSK
+        local {
+          auth = psk
+          id   = vpn.example.org
+        }
+        remote {
+          auth = psk
+          id   = %any
+        }
+
+        # Round 2: XAuth (server requests credentials from client)
+        local2 {
+          auth = xauth
+        }
+
+        children {
+          rw {
+            local_ts  = 0.0.0.0/0
+            remote_ts = dynamic
+          }
+        }
+      }
+    }
+
+    secrets {
+      ike-psk {
+        secret = "PhaseOneSecret!"
+      }
+
+      eap-alice {
+        id     = alice
+        secret = "AliceXAuthPw"
+      }
+      eap-bob {
+        id     = bob
+        secret = "BobXAuthPw"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Gateway (Hybrid Mode)">
+    ```ini
+    connections {
+      ikev1-hybrid {
+        version = 1
+
+        local_addrs  = 203.0.113.1
+        remote_addrs = %any
+
+        # Gateway authenticates with a certificate
+        local {
+          auth  = pubkey
+          certs = serverCert.pem
+          id    = vpn.example.org
+        }
+
+        # Client authenticates with XAuth only (Hybrid Mode)
+        remote {
+          auth = xauth
+          id   = %any
+        }
+
+        children {
+          rw {
+            local_ts  = 10.0.0.0/8
+            remote_ts = dynamic
+          }
+        }
+      }
+    }
+
+    secrets {
+      eap-carol {
+        id     = carol
+        secret = "CarolXAuthPw"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Client">
+    ```ini
+    connections {
+      ikev1-client {
+        version = 1
+
+        local_addrs  = %any
+        remote_addrs = 203.0.113.1
+
+        local {
+          auth    = psk
+          id      = client@example.org
+          xauth_id = alice
+        }
+        remote {
+          auth = psk
+          id   = vpn.example.org
+        }
+
+        children {
+          rw {
+            remote_ts = 0.0.0.0/0
+          }
+        }
+      }
+    }
+
+    secrets {
+      ike-psk {
+        secret = "PhaseOneSecret!"
+      }
+      eap-alice {
+        id     = alice
+        secret = "AliceXAuthPw"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Key Configuration Options
+
+### local / remote auth Values
+
+| Value | Role | Description |
+|---|---|---|
+| `xauth` | local (server) | Server will request XAuth from client |
+| `xauth` | remote (client) | Client will respond to XAuth requests |
+| `xauth-generic` | local | Explicitly use the `xauth-generic` backend |
+| `xauth-pam` | local | Use PAM for credential validation |
+| `xauth-eap` | local | Use EAP/RADIUS backend for validation |
+
+### xauth_id
+
+The `xauth_id` option in the `local` section of a client connection sets the username sent during the XAuth exchange:
+
+```ini
+local {
+  auth     = psk
+  xauth_id = alice
+}
+```
+
+This allows the IKEv2 identity (`id`) and the XAuth username to differ — useful when the IKE identity is an IP address or FQDN but the XAuth credential is a username.
+
+## XAuth Secrets
+
+XAuth credentials are stored in the `secrets` section under `eap` or `xauth` prefixes (they are aliases for one another):
+
+```ini
+secrets {
+  # 'xauth' prefix is an alias for 'eap'
+  xauth-alice {
+    id     = alice
+    secret = "AlicePassword123"
+  }
+
+  eap-bob {
+    id     = bob
+    secret = "BobPassword456"
+  }
+}
+```
+
+<Note>
+The `xauth` and `eap` secret prefixes are interchangeable. Secrets defined under either prefix are used for both XAuth and EAP authentication.
+</Note>
+
+## XAuth Backends
+
+strongSwan provides multiple backends for validating XAuth credentials:
+
+<CardGroup cols={3}>
+  <Card title="xauth-generic" icon="file">
+    Validates credentials against secrets defined in `swanctl.conf` (or `ipsec.secrets`). Best for simple, self-contained deployments.
+  </Card>
+  <Card title="xauth-pam" icon="user">
+    Delegates credential validation to Linux PAM. Enables integration with OS user accounts, LDAP, or any PAM-compatible backend.
+  </Card>
+  <Card title="xauth-eap (via eap-radius)" icon="server">
+    The `eap-radius` plugin registers an XAuth backend named `radius`. Use `auth = xauth-radius` to forward XAuth credentials to a RADIUS server.
+  </Card>
+</CardGroup>
+
+### Using xauth-generic
+
+This is the default backend when `auth = xauth` is configured. Credentials are checked against shared secrets in `swanctl.conf`:
+
+```ini
+local2 {
+  auth = xauth           # uses xauth-generic by default
+  # or explicitly:
+  # auth = xauth-generic
+}
+```
+
+The server requests `XAUTH_USER_NAME` and `XAUTH_USER_PASSWORD` attributes from the client. It then looks up the provided username in the credential manager and performs a constant-time comparison of the password.
+
+### Using xauth-pam
+
+```ini
+local2 {
+  auth = xauth-pam
+}
+```
+
+Configure the PAM service in `strongswan.conf`:
+
+```ini
+# /etc/strongswan.conf
+charon {
+  plugins {
+    xauth-pam {
+      pam_service = ipsec   # PAM service name (default: ipsec)
+    }
+  }
+}
+```
+
+Create the corresponding PAM service file at `/etc/pam.d/ipsec`.
+
+### Using xauth-radius
+
+Requires the `eap-radius` plugin to be loaded and configured:
+
+```ini
+local2 {
+  auth = xauth-radius
+}
+```
+
+Configure the RADIUS server in `strongswan.conf` as described in the [EAP-RADIUS documentation](/authentication/eap#eap-radius).
+
+## Comparison with EAP (IKEv2)
+
+| Feature | XAuth (IKEv1) | EAP (IKEv2) |
+|---|---|---|
+| Protocol version | IKEv1 only | IKEv2 only |
+| Standardization | Cisco proprietary extension | RFC 3748, RFC 5996 |
+| Method negotiation | None (fixed username/password) | Flexible (MD5, MSCHAPv2, TLS, etc.) |
+| Mutual authentication | No (server not authenticated via XAuth) | Yes (with EAP-TLS, EAP-MSCHAPv2) |
+| MSK generation | No | Yes (with most methods) |
+| Multiple rounds | Via IKEv1 Mode Config only | RFC 4739 Multiple Authentication |
+| Recommended for new deployments | No | Yes |
+
+<Tip>
+If you are deploying a new VPN infrastructure, use IKEv2 with EAP. XAuth support is primarily provided for compatibility with existing clients and legacy infrastructure.
+</Tip>

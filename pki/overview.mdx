@@ -1,0 +1,89 @@
+---
+title: 'PKI Overview'
+description: Overview of the strongSwan PKI toolchain for managing certificates and keys.
+keywords: ['pki', 'certificates', 'keys', 'CA', 'CRL', 'strongSwan']
+---
+
+The strongSwan `pki` tool is a command-line utility for managing the full lifecycle of X.509 certificates and private keys used in IKEv2 VPN authentication. It can generate keys, build certificate authorities, issue end-entity certificates, sign CRLs, and inspect or verify existing credentials — all without depending on OpenSSL's `openssl` CLI.
+
+## Subcommands
+
+| Command | Description |
+|---|---|
+| `pki --gen` | Generate a private key (RSA, ECDSA, Ed25519, Ed448) |
+| `pki --self` | Create a self-signed CA certificate from a private key |
+| `pki --issue` | Issue a signed end-entity certificate using a CA key and cert |
+| `pki --req` | Create a PKCS#10 certificate signing request (CSR) |
+| `pki --signcrl` | Sign a Certificate Revocation List |
+| `pki --print` | Print the contents of a certificate, CRL, or key |
+| `pki --verify` | Verify a certificate's signature chain |
+| `pki --pub` | Extract the public key from a private key |
+| `pki --pkcs12` | Create or extract PKCS#12 bundles |
+| `pki --pkcs7` | PKCS#7 container operations |
+| `pki --acert` | Issue attribute certificates |
+| `pki --dn` | Extract the distinguished name from a certificate |
+| `pki --keyid` | Compute the key identifier of a key or certificate |
+| `pki --ocsp` | Perform OCSP requests |
+| `pki --scep` | SCEP certificate enrollment |
+| `pki --est` | EST certificate enrollment |
+
+Run `pki --help` or `pki <subcommand> --help` for full option documentation.
+
+## Supported key types
+
+| Type | Sizes / Curves | Notes |
+|---|---|---|
+| RSA | 2048, 3072, 4096 bits | Traditional; use 3072+ for new deployments |
+| ECDSA | 256, 384, 521 bits | NIST P-curves; good performance and security |
+| Ed25519 | 256 bits | Recommended for new CAs and host keys |
+| Ed448 | 448 bits | Higher security margin EdDSA variant |
+
+<Tip>
+Ed25519 is the recommended default for new strongSwan deployments. It offers 128-bit security with fast operations and compact keys.
+</Tip>
+
+## Output formats
+
+All `pki` commands that write credentials support `--outform`:
+
+- **`der`** — Binary ASN.1 DER (default for most commands)
+- **`pem`** — Base64 PEM (human-readable, preferred for config files)
+
+strongSwan automatically detects the format from file content regardless of the file extension.
+
+## File locations under /etc/swanctl/
+
+strongSwan's `swanctl` loads credentials from a well-known directory tree:
+
+```text
+/etc/swanctl/
+├── x509ca/        # CA certificates (DER or PEM)
+├── x509/          # Host and user end-entity certificates
+├── x509crl/       # Certificate Revocation Lists
+├── private/       # Private keys (restrict permissions: 600)
+└── pkcs12/        # PKCS#12 bundles for client import
+```
+
+<Warning>
+Files under `private/` must be readable only by root (mode `600` or `400`). A world-readable private key compromises the entire VPN.
+</Warning>
+
+After placing or updating credential files, reload them into the running daemon:
+
+```bash
+swanctl --load-creds
+```
+
+## Where to go next
+
+<CardGroup cols={3}>
+  <Card title="CA Setup" icon="shield-check" href="/pki/ca-setup">
+    Generate a CA key and self-signed root certificate.
+  </Card>
+  <Card title="Generating Certificates" icon="file-badge" href="/pki/generate-certificates">
+    Issue host and user certificates signed by your CA.
+  </Card>
+  <Card title="CRL Management" icon="list-x" href="/pki/crl-management">
+    Sign and distribute Certificate Revocation Lists.
+  </Card>
+</CardGroup>

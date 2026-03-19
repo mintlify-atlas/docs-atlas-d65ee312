@@ -1,0 +1,240 @@
+---
+title: "EAP Plugins"
+description: "EAP authentication method plugins for password-based and certificate-based client authentication in strongSwan"
+---
+
+EAP (Extensible Authentication Protocol) plugins enable flexible client authentication beyond raw certificates and PSKs. Each plugin implements one EAP method. The method used is negotiated during IKEv2 authentication and controlled by the `auth` setting in `swanctl.conf`.
+
+## EAP method reference
+
+| Plugin | `auth=` value | Use case |
+|--------|--------------|----------|
+| `eap-md5` | `eap-md5` | Simple CHAP-style challenge/response; mostly legacy |
+| `eap-mschapv2` | `eap-mschapv2` | Password auth for Windows and Android clients |
+| `eap-tls` | `eap-tls` | Mutual certificate authentication within EAP |
+| `eap-ttls` | `eap-ttls` | TLS tunnel wrapping an inner EAP method |
+| `eap-peap` | `eap-peap` | Microsoft PEAP; inner MSCHAPv2 is most common |
+| `eap-radius` | `eap-radius` | Delegate authentication to an external RADIUS server |
+| `eap-sim` | `eap-sim` | SIM card (GSM) authentication |
+| `eap-aka` | `eap-aka` | UMTS/LTE AKA authentication |
+| `eap-aka-3gpp` | `eap-aka-3gpp` | 3GPP AKA variant |
+| `eap-aka-3gpp2` | `eap-aka-3gpp2` | 3GPP2 AKA variant |
+| `eap-gtc` | `eap-gtc` | Generic Token Card (one-time passwords) |
+| `eap-tnc` | `eap-tnc` | Trusted Network Connect posture assessment |
+| `eap-dynamic` | `eap-dynamic` | Method selection based on client proposal |
+
+## Configuring EAP in swanctl.conf
+
+On the gateway (responder), set the `auth` value for the remote peer:
+
+```conf swanctl.conf
+connections {
+  roadwarrior {
+    local {
+      auth = pubkey
+      certs = gatewayCert.pem
+    }
+    remote {
+      auth = eap-mschapv2   # Require EAP-MSCHAPv2 from clients
+      eap_id = %any
+    }
+    children {
+      rw {
+        local_ts  = 0.0.0.0/0
+        remote_ts = dynamic
+      }
+    }
+  }
+}
+```
+
+## EAP-RADIUS
+
+`eap-radius` proxies the EAP exchange to an external RADIUS server. The charon daemon acts as a NAS (Network Access Server). Any EAP method supported by the RADIUS server can be used transparently.
+
+### Basic configuration
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-radius {
+      server = 192.168.0.10
+      secret = MyRadiusSecret
+      port   = 1812
+    }
+  }
+}
+```
+
+### Multiple RADIUS servers
+
+Use the `servers` section to define multiple servers with per-server settings:
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-radius {
+      nas_identifier = strongSwan-gw
+      servers {
+        primary {
+          address   = 192.168.0.10
+          secret    = PrimarySecret
+          auth_port = 1812
+          acct_port = 1813
+          preference = 10
+        }
+        backup {
+          address   = 192.168.0.11
+          secret    = BackupSecret
+          auth_port = 1812
+          acct_port = 1813
+          preference = 0
+        }
+      }
+    }
+  }
+}
+```
+
+### RADIUS accounting
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-radius {
+      accounting                  = yes
+      accounting_interval         = 300s   # Interim updates every 5 minutes
+      accounting_close_on_timeout = yes    # Tear down IKE_SA if accounting fails
+    }
+  }
+}
+```
+
+### Dynamic Authorization Extension (RFC 5176)
+
+DAE allows the RADIUS server to disconnect or re-authenticate sessions:
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-radius {
+      dae {
+        enable = yes
+        listen = 0.0.0.0
+        port   = 3799
+        secret = DaeSecret
+      }
+    }
+  }
+}
+```
+
+<Note>
+RADIUS `Class` attributes can be used as group membership identifiers for authorization. Set `class_group = yes` to compare the `Class` attribute value against the `groups` setting in `swanctl.conf`.
+</Note>
+
+## EAP-TLS
+
+`eap-tls` performs mutual certificate authentication inside an EAP exchange. Both client and server present X.509 certificates.
+
+```conf swanctl.conf
+connections {
+  cert-auth {
+    remote {
+      auth   = eap-tls
+      eap_id = %any
+    }
+  }
+}
+```
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-tls {
+      fragment_size    = 1024   # Maximum EAP-TLS packet size
+      max_message_count = 32    # Maximum packets per handshake (0 = unlimited)
+    }
+  }
+}
+```
+
+## EAP-TTLS
+
+`eap-ttls` establishes a TLS tunnel using the server certificate, then runs an inner EAP method inside the tunnel. The client does not need a certificate.
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-ttls {
+      phase2_method    = mschapv2   # Inner EAP method (md5, mschapv2, tls, ...)
+      phase2_piggyback = no
+      phase2_tnc       = no
+      request_peer_auth = no        # No client certificate required
+    }
+  }
+}
+```
+
+## EAP-PEAP
+
+`eap-peap` is Microsoft's implementation of a TLS-tunneled EAP method, most commonly used with inner MSCHAPv2. It is the standard method for Windows built-in VPN clients using IKEv2.
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-peap {
+      phase2_method     = mschapv2   # Inner method inside PEAP tunnel
+      phase2_piggyback  = no
+      phase2_tnc        = no
+      request_peer_auth = no
+    }
+  }
+}
+```
+
+<Tip>
+For Windows 10/11 built-in IKEv2 clients using username/password, use `eap-mschapv2` directly or `eap-peap` with inner `mschapv2`. Both require the `openssl` plugin with `load_legacy = yes` for MD4/DES support.
+</Tip>
+
+## EAP-Dynamic
+
+`eap-dynamic` selects the EAP method at runtime based on what the client proposes. This lets a single gateway connection support multiple EAP methods without configuring separate connections.
+
+```conf strongswan.conf
+charon {
+  plugins {
+    eap-dynamic {
+      # Try these methods in order before falling back to other registered methods
+      preferred    = eap-tls,eap-mschapv2
+      # If yes, prefer methods proposed by the client in EAP-Nak
+      prefer_user  = no
+    }
+  }
+}
+```
+
+```conf swanctl.conf
+connections {
+  multi-auth {
+    remote {
+      auth   = eap-dynamic
+      eap_id = %any
+    }
+  }
+}
+```
+
+<Note>
+All EAP methods that `eap-dynamic` should be able to select must also be loaded as plugins. For example, to support both `eap-tls` and `eap-mschapv2`, both plugins must be present in the load list.
+</Note>
+
+## EAP-SIM and EAP-AKA
+
+`eap-sim` and `eap-aka` authenticate subscribers using SIM card credentials (GSM) or USIM credentials (UMTS/LTE). These are used primarily in mobile operator deployments.
+
+- `eap-sim`: GSM triplet-based authentication
+- `eap-aka`: UMTS quintuplet-based authentication with sequence number protection
+- `eap-aka-3gpp` / `eap-aka-3gpp2`: 3GPP and 3GPP2 specific AKA variants
+
+Credentials are sourced from backend plugins: `eap-sim-file` (flat file), `eap-sim-pcsc` (PC/SC smart card reader), or `eap-simaka-sql` (SQL database).

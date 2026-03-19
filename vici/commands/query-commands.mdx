@@ -1,0 +1,356 @@
+---
+title: "Query & Status Commands"
+description: "VICI commands for querying daemon status, algorithms, pools, certificates, and counters."
+---
+
+These commands query the current state of the charon daemon without modifying any configuration or SAs.
+
+## version
+
+Return daemon and system version information.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="daemon" type="string">
+  IKE daemon name (e.g., `charon`).
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  strongSwan version string.
+</ResponseField>
+
+<ResponseField name="sysname" type="string">
+  Operating system name (e.g., `Linux`).
+</ResponseField>
+
+<ResponseField name="release" type="string">
+  Operating system release string.
+</ResponseField>
+
+<ResponseField name="machine" type="string">
+  Hardware identifier (e.g., `x86_64`).
+</ResponseField>
+
+**Python example**
+
+```python
+ver = v.version()
+print("{daemon} {version} ({sysname}, {release}, {machine})".format(**{
+    k.decode(): v.decode() for k, v in ver.items()
+}))
+```
+
+---
+
+## stats
+
+Return IKE daemon statistics and load information.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="uptime" type="section">
+  <Expandable title="fields">
+    <ResponseField name="running" type="string">
+      Relative uptime in human-readable form (e.g., `5 minutes`).
+    </ResponseField>
+    <ResponseField name="since" type="string">
+      Absolute startup time.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="workers" type="section">
+  <Expandable title="fields">
+    <ResponseField name="total" type="string">
+      Total number of worker threads.
+    </ResponseField>
+    <ResponseField name="idle" type="string">
+      Number of worker threads currently idle.
+    </ResponseField>
+    <ResponseField name="active" type="section">
+      Active thread counts broken down by job priority: `critical`, `high`, `medium`, `low`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="queues" type="section">
+  Job queue depths by priority: `critical`, `high`, `medium`, `low`.
+</ResponseField>
+
+<ResponseField name="scheduled" type="string">
+  Number of jobs scheduled for future timed execution.
+</ResponseField>
+
+<ResponseField name="ikesas" type="section">
+  <Expandable title="fields">
+    <ResponseField name="total" type="string">
+      Total number of active IKE_SAs.
+    </ResponseField>
+    <ResponseField name="half-open" type="string">
+      Number of IKE_SAs in a half-open state.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="plugins" type="list">
+  Names of all loaded plugins.
+</ResponseField>
+
+<ResponseField name="mem" type="section">
+  Available when built with leak-detective support or on Windows. Contains `total` (bytes) and `allocs` (block count) fields.
+</ResponseField>
+
+<ResponseField name="mallinfo" type="section">
+  Available on systems with `mallinfo()` support. Contains `sbrk`, `mmap`, `used`, and `free` fields.
+</ResponseField>
+
+---
+
+## reload-settings
+
+Reload `strongswan.conf` settings and reinitialize all plugins that support configuration reload.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## list-certs
+
+Stream currently loaded certificates as `list-cert` events. Includes all certificates known to the daemon, not only those loaded over VICI.
+
+This is a **streaming command**. Register for the [`list-cert`](/vici/events/sa-events#list-cert) event before issuing this command.
+
+**Input**
+
+<ParamField body="type" type="string">
+  Filter by certificate type. One of: `X509`, `X509_AC`, `X509_CRL`, `OCSP_RESPONSE`, `PUBKEY`, or `ANY`.
+</ParamField>
+
+<ParamField body="flag" type="string">
+  Filter by X.509 certificate flag. One of: `NONE`, `CA`, `AA`, `OCSP`, or `ANY`.
+</ParamField>
+
+<ParamField body="subject" type="string">
+  Only list certificates that contain this subject.
+</ParamField>
+
+**Response**
+
+An empty message (`{}`). All certificate data arrives via `list-cert` events.
+
+---
+
+## list-authorities
+
+Stream currently loaded CA information as `list-authority` events.
+
+This is a **streaming command**. Register for the [`list-authority`](/vici/events/sa-events#list-authority) event before issuing this command.
+
+**Input**
+
+<ParamField body="name" type="string">
+  Only list the CA authority with this name.
+</ParamField>
+
+**Response**
+
+An empty message (`{}`). All authority data arrives via `list-authority` events.
+
+---
+
+## get-authorities
+
+Return a list of currently loaded CA authority names.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="authorities" type="list">
+  List of certification authority names.
+</ResponseField>
+
+---
+
+## load-pool
+
+Load an in-memory virtual IP and configuration attribute pool. Existing pools with the same name are updated in place if possible.
+
+**Input**
+
+<ParamField body="<pool name>" type="section" required>
+  A section named after the pool.
+  <Expandable title="fields">
+    <ParamField body="addrs" type="string" required>
+      Subnet of virtual IP addresses in CIDR notation (e.g., `10.10.0.0/24`).
+    </ParamField>
+    <ParamField body="<attribute type>" type="list">
+      Optional configuration attribute lists. Attribute types include: `address`, `dns`, `nbns`, `dhcp`, `netmask`, `server`, `subnet`, `split_include`, `split_exclude`, or a numeric attribute type identifier.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## unload-pool
+
+Unload a virtual IP pool. Unloading fails if the pool has any leases currently online.
+
+**Input**
+
+<ParamField body="name" type="string" required>
+  Name of the virtual IP pool to delete.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## get-pools
+
+List currently loaded virtual IP pools, optionally including lease information.
+
+**Input**
+
+<ParamField body="leases" type="string">
+  Set to `yes` to include lease details in the response.
+</ParamField>
+
+<ParamField body="name" type="string">
+  Name of a specific pool to query. Omit to list all pools.
+</ParamField>
+
+**Response**
+
+<ResponseField name="<pool name>" type="section">
+  One section per pool.
+  <Expandable title="fields">
+    <ResponseField name="base" type="string">
+      Pool base address.
+    </ResponseField>
+    <ResponseField name="size" type="string">
+      Total number of addresses in the pool.
+    </ResponseField>
+    <ResponseField name="online" type="string">
+      Number of leases currently online.
+    </ResponseField>
+    <ResponseField name="offline" type="string">
+      Number of leases currently offline.
+    </ResponseField>
+    <ResponseField name="leases" type="section">
+      Present when `leases=yes`. Contains zero-based indexed subsections, each with `address`, `identity`, and `status` (`online`|`offline`) fields.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## get-algorithms
+
+List all loaded cryptographic algorithms and the plugin that provides each implementation.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="<algorithm type>" type="section">
+  One section per algorithm category (e.g., `encryption`, `integrity`, `dh`). Each section maps algorithm names to the providing plugin name.
+</ResponseField>
+
+---
+
+## get-counters
+
+Retrieve IKE event counters, either globally or per connection.
+
+**Input**
+
+<ParamField body="name" type="string">
+  Connection name for per-connection counters. Omit to get global counters.
+</ParamField>
+
+<ParamField body="all" type="string">
+  Set to `yes` to retrieve counters for all connections. The `name` field is ignored when this is set.
+</ParamField>
+
+**Response**
+
+<ResponseField name="counters" type="section">
+  Contains one subsection per connection name (or an empty-named section for global counters). Each subsection maps counter names to 64-bit integer values encoded as strings.
+</ResponseField>
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## reset-counters
+
+Reset IKE event counters, either globally or per connection.
+
+**Input**
+
+<ParamField body="name" type="string">
+  Connection name to reset counters for. Omit to reset global counters.
+</ParamField>
+
+<ParamField body="all" type="string">
+  Set to `yes` to reset counters for all connections.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>

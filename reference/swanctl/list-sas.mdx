@@ -1,0 +1,193 @@
+---
+title: "swanctl --list-sas"
+description: List all currently active IKE and CHILD Security Associations, with negotiated algorithms, traffic selectors, and traffic counters.
+sidebarTitle: "--list-sas"
+---
+
+The `--list-sas` command queries the running `charon` daemon via VICI and
+prints all active Security Associations. Each IKE_SA header is followed by
+its CHILD_SAs showing SPIs, traffic selectors, byte/packet counters, and
+the negotiated cipher suite.
+
+## Synopsis
+
+```bash
+swanctl --list-sas [--ike <name>] [--ike-id <id>]
+                   [--child <name>] [--child-id <id>]
+                   [--noblock] [--raw|--pretty]
+```
+
+## Options
+
+<ParamField path="--ike" type="string">
+  Filter output to IKE_SAs matching the given configuration name.
+</ParamField>
+
+<ParamField path="--ike-id" type="integer">
+  Filter output to a single IKE_SA by its unique numeric identifier.
+</ParamField>
+
+<ParamField path="--child" type="string">
+  Filter output to CHILD_SAs matching the given configuration name. The parent
+  IKE_SA header is still shown.
+</ParamField>
+
+<ParamField path="--child-id" type="integer">
+  Filter output to a single CHILD_SA by its unique numeric identifier.
+</ParamField>
+
+<ParamField path="--noblock" type="boolean">
+  Return immediately if an IKE_SA is currently busy (e.g., in the middle of a
+  rekeying exchange) instead of waiting for it to become idle.
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Dump the raw VICI event messages instead of the formatted summary.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Dump the raw VICI event messages with pretty-print indentation. Implies
+  `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI. Overrides the default `unix:///var/run/charon.vici`.
+</ParamField>
+
+## Example output
+
+```bash
+swanctl --list-sas
+```
+
+```
+net-net: #1, ESTABLISHED, IKEv2, aabbccdd11223344_i* 8899aabb00112233_r
+  local  'C=CH, O=strongSwan, CN=moon.strongswan.org' @ 192.168.0.1[500]
+  remote 'C=CH, O=strongSwan, CN=sun.strongswan.org' @ 192.168.0.2[500]
+  AES_CBC-256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+  established 143s ago, rekeying in 13560s, expires in 13977s
+  net-net: #1, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256/MODP_2048
+    installed 143s ago, rekeying in 3196s, expires in 3617s
+    in  c1a2b3c4,      0 bytes,     0 packets
+    out d4e5f6a7,      0 bytes,     0 packets
+    local  10.1.0.0/16
+    remote 10.2.0.0/16
+```
+
+## Output field reference
+
+### IKE_SA header line
+
+```
+net-net: #1, ESTABLISHED, IKEv2, aabbccdd11223344_i* 8899aabb00112233_r
+```
+
+| Field | Description |
+|-------|-------------|
+| `net-net` | Connection configuration name from `swanctl.conf` |
+| `#1` | Unique numeric ID for this IKE_SA |
+| `ESTABLISHED` | SA state: `CONNECTING`, `ESTABLISHED`, `REKEYING`, `DELETING` |
+| `IKEv2` | IKE protocol version |
+| `aabbccdd..._i` | Initiator SPI (64-bit hex). A trailing `*` means this daemon is the initiator |
+| `8899aabb..._r` | Responder SPI (64-bit hex). A trailing `*` means this daemon is the responder |
+
+### IKE_SA endpoint lines
+
+```
+  local  'C=CH, O=strongSwan, CN=moon.strongswan.org' @ 192.168.0.1[500]
+  remote 'C=CH, O=strongSwan, CN=sun.strongswan.org' @ 192.168.0.2[500]
+```
+
+| Field | Description |
+|-------|-------------|
+| `local` / `remote` | Local and remote identity (IKE ID) |
+| `@ <ip>[<port>]` | UDP endpoint address and port (500 = no NAT, 4500 = NAT-T) |
+| `[<vip>]` | Virtual IP assigned via CP payload, if any |
+
+### Cipher suite line
+
+```
+  AES_CBC-256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+```
+
+Format: `<encryption>/<integrity>/<PRF>/<DH-group>`. For IKEv2 with AES-GCM,
+the integrity algorithm may be omitted (AEAD covers both).
+
+### Timing line
+
+```
+  established 143s ago, rekeying in 13560s, expires in 13977s
+```
+
+| Field | Description |
+|-------|-------------|
+| `established Xs ago` | Seconds since the IKE_SA was established |
+| `rekeying in Xs` | Seconds until automatic rekeying is triggered |
+| `reauth in Xs` | Seconds until reauthentication (shown instead of rekeying when `reauth_time` is configured) |
+| `expires in Xs` | Seconds until the SA hard-expires |
+
+### CHILD_SA line
+
+```
+  net-net: #1, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256/MODP_2048
+```
+
+| Field | Description |
+|-------|-------------|
+| `net-net` | CHILD_SA configuration name |
+| `#1` | Unique CHILD_SA ID |
+| `reqid 1` | Kernel request ID used to link the SA to SPD policies |
+| `INSTALLED` | State: `INSTALLING`, `INSTALLED`, `UPDATING`, `REKEYING`, `DELETING` |
+| `TUNNEL` | Mode: `TUNNEL` or `TRANSPORT` |
+| `-in-UDP` | Appended to mode when UDP encapsulation (NAT-T) is active |
+| `ESP` | Security protocol: `ESP` or `AH` |
+| `AES_GCM_16-256` | Encryption algorithm and key length |
+| `/MODP_2048` | PFS DH group used during CREATE_CHILD_SA rekey, if any |
+
+### SPI / traffic counter lines
+
+```
+    in  c1a2b3c4,      0 bytes,     0 packets
+    out d4e5f6a7,      0 bytes,     0 packets
+```
+
+| Field | Description |
+|-------|-------------|
+| `c1a2b3c4` | 32-bit inbound SPI (used by the kernel to identify the SA) |
+| `bytes` | Total bytes processed by this SA |
+| `packets` | Total packets processed |
+| `Xs ago` | Seconds since the last packet was seen (shown once traffic has passed) |
+
+<Info>
+When IP compression (IPComp) is active, a CPI value appears after the SPI,
+formatted as `<spi>/<cpi>`.
+</Info>
+
+### Traffic selector lines
+
+```
+    local  10.1.0.0/16
+    remote 10.2.0.0/16
+```
+
+Narrowed traffic selectors negotiated with the peer. These may differ from
+the configured selectors if the peer requested narrowing.
+
+## Filtering examples
+
+```bash
+# Show only the roadwarrior IKE_SA
+swanctl --list-sas --ike roadwarrior
+
+# Show all CHILD_SAs named "home"
+swanctl --list-sas --child home
+
+# Look up a specific SA by ID
+swanctl --list-sas --ike-id 3
+```
+
+## See also
+
+- [`swanctl --initiate`](/reference/swanctl/initiate) — bring up a new SA
+- [`swanctl --terminate`](/reference/swanctl/terminate) — tear down a specific SA
+- [`swanctl --rekey`](/reference/swanctl/rekey) — manually trigger rekeying

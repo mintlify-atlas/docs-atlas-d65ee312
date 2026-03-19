@@ -1,0 +1,188 @@
+---
+title: "Monitoring"
+description: "Monitor VPN status, active connections, and daemon health using swanctl and the VICI interface."
+---
+
+strongSwan exposes runtime state through `swanctl` commands backed by the VICI interface. You can inspect active Security Associations, track traffic counters, view kernel policies, query IP pool utilization, and stream live log output — all without restarting the daemon.
+
+## Listing active Security Associations
+
+```bash
+swanctl --list-sas
+```
+
+This is the primary command for checking tunnel state. It prints every active IKE_SA and its nested CHILD_SAs.
+
+```text
+gw-gw: #1, ESTABLISHED, IKEv2, aef372b5d74e2e0e_i* 8f1e6e42a3c87f5d_r
+  local  'gateway.example.com' @ 203.0.113.1[4500]
+  remote 'peer.example.com' @ 198.51.100.1[4500]
+  AES_CBC-256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+  established 1842s ago, rekeying in 12453s
+  net: #1, reqid 1, INSTALLED, TUNNEL, ESP:
+    AES_GCM_16-256
+    installed 1842s ago, rekeying in 1384s, expires in 2958s
+    in  c3a7e891,   8765 bytes,   112 packets,    23s ago
+    out cf2d4180,  12048 bytes,   154 packets,    23s ago
+    local  10.0.0.0/24
+    remote 10.1.0.0/24
+```
+
+### Reading the IKE_SA line
+
+| Field | Example | Meaning |
+|---|---|---|
+| Connection name | `gw-gw` | Name from `swanctl.conf`. |
+| Unique ID | `#1` | Runtime identifier for this SA instance. |
+| State | `ESTABLISHED` | IKE_SA is up and authenticated. |
+| IKE version | `IKEv2` | Protocol version in use. |
+| Initiator SPI | `aef372b5d74e2e0e_i*` | `*` marks the role this node holds. |
+| Local identity | `'gateway.example.com'` | Authenticated local ID. |
+| Remote identity | `'peer.example.com'` | Authenticated remote ID. |
+| Algorithms | `AES_CBC-256/...` | Encryption/integrity/PRF/DH suite. |
+| Timing | `established 1842s ago` | Seconds since the IKE_SA was established. |
+
+### Reading the CHILD_SA block
+
+| Field | Example | Meaning |
+|---|---|---|
+| Name | `net` | CHILD_SA configuration name. |
+| Request ID | `reqid 1` | Used to correlate kernel policies. |
+| State | `INSTALLED` | Kernel SA and policies are active. |
+| Mode | `TUNNEL` | ESP encapsulation mode (TUNNEL or TRANSPORT). |
+| Cipher | `AES_GCM_16-256` | ESP encryption algorithm. |
+| Inbound SPI | `c3a7e891` | Kernel inbound SA handle. |
+| Traffic | `8765 bytes, 112 packets` | Counters since installation. |
+| Traffic selectors | `10.0.0.0/24` / `10.1.0.0/24` | Protected subnets. |
+
+### Filtering output
+
+```bash
+# Show only one IKE_SA by name
+swanctl --list-sas --ike gw-gw
+
+# Show only SAs containing a specific CHILD_SA
+swanctl --list-sas --child net
+
+# Filter by numeric unique ID
+swanctl --list-sas --ike-id 3
+```
+
+## Daemon statistics
+
+```bash
+swanctl --stats
+```
+
+```text
+uptime: 3 hours, since Mar 19 09:14:22 2026
+worker threads: 16 total, 14 idle, working: 0/0/1/1
+job queues: 0/0/0/0
+jobs scheduled: 42
+IKE_SAs: 3 total, 0 half-open
+loaded plugins: charon aes sha2 sha1 md5 random nonce ...
+```
+
+| Field | Description |
+|---|---|
+| `uptime` | How long charon has been running and its start timestamp. |
+| `worker threads` | Total threads and idle count. `working` shows active jobs per priority (critical/high/medium/low). |
+| `job queues` | Pending jobs in each priority queue. |
+| `jobs scheduled` | Number of timer-based jobs queued (rekeys, DPD checks, etc.). |
+| `IKE_SAs` | Total established IKE_SAs and count of half-open (unauthenticated) SAs. |
+| `loaded plugins` | All active charon plugins. |
+
+<Tip>
+  A non-zero `half-open` count sustained over time may indicate an ongoing IKE flood or slow peer connectivity. Normal bursts during startup are expected.
+</Tip>
+
+## IKE event counters
+
+The `counters` plugin (when loaded) tracks per-event counts for IKE protocol activity. These counters survive individual SA lifetimes and accumulate across renegotiations.
+
+```bash
+# Global counters
+swanctl --counters
+
+# Counters scoped to a specific connection
+swanctl --counters --name gw-gw
+
+# Counters for all tracked connections
+swanctl --counters --all
+
+# Reset counters to zero
+swanctl --counters --reset
+```
+
+Example output:
+
+```text
+global:
+  ike-init-in-req        : 42
+  ike-init-in-resp       : 0
+  ike-init-out-req       : 3
+  ike-init-out-resp      : 39
+  ike-auth-in-req        : 42
+  ike-auth-in-resp       : 0
+  child-sa-rekey         : 128
+  child-sa-install       : 171
+  ike-rekey-in-req       : 7
+  ike-rekey-out-req      : 2
+```
+
+<Info>
+  Counters are provided by the `counters` plugin. Ensure it is loaded by checking `swanctl --stats` output for `counters` in the plugin list.
+</Info>
+
+## Live log streaming
+
+```bash
+swanctl --log
+```
+
+This command subscribes to charon's `log` VICI event stream and prints messages as they arrive. Press `Ctrl+C` to disconnect.
+
+```text
+00[DMN] Starting IKE charon daemon (strongSwan 6.0.0, Linux, x86_64)
+00[CFG] loading ca certificates from '/etc/swanctl/x509ca'
+01[IKE] received DH group MODP_2048, proposing MODP_2048
+01[IKE] authentication of 'peer.example.com' with RSA_EMSA_PKCS1_SHA2_256 successful
+01[IKE] IKE_SA gw-gw[1] established between 203.0.113.1[gateway.example.com]...198.51.100.1[peer.example.com]
+```
+
+Log output format is `thread[group] message`. The log command captures levels 0 (critical) and 1 (default) only — it does not reflect higher verbosity configured via file or syslog destinations.
+
+## Traffic policies
+
+```bash
+swanctl --list-pols
+```
+
+Lists kernel-level IPsec traffic policies (XFRM policies on Linux). This shows what traffic is expected to be protected or bypassed, regardless of whether a corresponding SA is currently active.
+
+## IP pool utilization
+
+```bash
+# List pools and current lease counts
+swanctl --list-pools
+
+# Include individual lease entries (IP, identity, status)
+swanctl --list-pools --leases
+```
+
+Example output with `--leases`:
+
+```text
+rw_pool     10.10.0.0                         1 / 1 / 254
+  10.10.0.1  offline  'client@example.com'
+```
+
+The three numbers after the pool address are `online / offline / total` lease counts.
+
+## Monitoring SA changes in real time
+
+```bash
+swanctl --monitor-sa
+```
+
+Subscribes to VICI `ike-updown` and `child-updown` events and prints SA information as tunnels come up or go down. Useful for scripting alerting or logging SA lifecycle events.

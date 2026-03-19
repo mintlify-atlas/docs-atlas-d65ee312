@@ -1,0 +1,254 @@
+---
+title: "Virtual IP Pools"
+description: "Assign virtual IP addresses to remote clients from configurable address pools"
+---
+
+Virtual IPs give roadwarrior clients a stable inner address inside the VPN network. Routes on the server side can then point to this address regardless of the client's actual public IP.
+
+<Info>
+  IKEv2 uses the Configuration Payload (CP) to exchange virtual IPs. IKEv1 uses Mode Config. Both mechanisms are supported by strongSwan.
+</Info>
+
+---
+
+## How it works
+
+1. The client requests a virtual IP by including `0.0.0.0` (IPv4) or `::` (IPv6) in its configuration payload.
+2. The server selects an address from the configured pool and returns it in the CP response.
+3. The client installs the assigned address on a local interface and uses it as the inner tunnel address.
+4. Traffic matching the tunnel's traffic selectors is routed through the VPN using this address.
+
+---
+
+## Pool definition
+
+Define pools in the `pools` section of `swanctl.conf`. Each pool has a unique name and an address range.
+
+```text swanctl.conf
+pools {
+    rw-pool {
+        addrs = 10.3.0.0/24
+    }
+}
+```
+
+The `addrs` value accepts:
+- A CIDR subnet: `10.3.0.0/24`
+- An explicit range: `10.3.0.1-10.3.0.254`
+- A subnet with a non-network-ID start (addresses below the start are skipped): `10.3.0.5/24`
+
+<Note>
+  Pools must be unique and non-overlapping. If you configure multiple pools, each must cover a disjoint address range.
+</Note>
+
+### Per-pool DNS and NBNS attributes
+
+Push DNS servers, NBNS/WINS servers, and other attributes alongside the virtual IP:
+
+```text swanctl.conf
+pools {
+    rw-pool {
+        addrs          = 10.3.0.0/24
+        dns            = 10.1.0.1, 10.1.0.2
+        nbns           = 10.1.0.10
+        split_include  = 10.1.0.0/16, 10.2.0.0/16
+        split_exclude  = 192.168.1.0/24
+    }
+}
+```
+
+Supported attribute types: `dns`, `nbns`, `dhcp`, `netmask`, `server`, `subnet`, `p_cscf`, `split_include`, `split_exclude`. You can also use numeric attribute identifiers.
+
+---
+
+## Connection configuration
+
+### Server side
+
+Reference a pool by name in the connection's `pools` parameter:
+
+```text swanctl.conf
+connections {
+    rw {
+        version      = 2
+        local_addrs  = 192.0.2.1
+        remote_addrs = %any
+        pools        = rw-pool
+
+        local {
+            auth  = pubkey
+            certs = server-cert.pem
+        }
+        remote {
+            auth = pubkey
+        }
+
+        children {
+            rw {
+                local_ts  = 10.1.0.0/16
+                remote_ts = dynamic
+                mode      = tunnel
+            }
+        }
+    }
+}
+```
+
+Using `remote_ts = dynamic` in the child SA causes the traffic selector to be set to the client's assigned virtual IP, which is the correct behavior for roadwarrior scenarios.
+
+### Client side
+
+Set `vips` in the connection to request a virtual IP from the server:
+
+```text swanctl.conf (client)
+connections {
+    rw {
+        version      = 2
+        remote_addrs = 192.0.2.1
+        vips         = 0.0.0.0
+
+        local {
+            auth  = pubkey
+            certs = client-cert.pem
+        }
+        remote {
+            auth = pubkey
+        }
+
+        children {
+            rw {
+                local_ts  = dynamic
+                remote_ts = 10.1.0.0/16
+                mode      = tunnel
+            }
+        }
+    }
+}
+```
+
+| `vips` value | Behavior |
+|---|---|
+| `0.0.0.0` | Request any available IPv4 address |
+| `::` | Request any available IPv6 address |
+| `0.0.0.0, ::` | Request both IPv4 and IPv6 addresses |
+| `10.3.0.42` | Request a specific address (server may return a different one) |
+
+---
+
+## Pool management commands
+
+```bash
+# Load or reload pool definitions from swanctl.conf
+swanctl --load-pools
+
+# List active pools and allocation status
+swanctl --list-pools
+
+# List pools including leases for offline clients
+swanctl --list-pools --leases
+```
+
+Example output from `--list-pools`:
+
+```text
+rw-pool       10.3.0.0                         1 / 1 / 254
+              10.3.0.1                         online  alice@example.org
+```
+
+Columns: pool name, network, online/offline/total leases, then per-lease: address, status, identity.
+
+---
+
+## In-memory vs. SQL-backed pools
+
+<Tabs>
+  <Tab title="In-memory pools">
+    The default pool implementation stores allocations in memory. Leases are lost when the daemon restarts.
+
+    Suitable for dynamic roadwarrior deployments where clients re-request addresses on reconnect.
+
+    ```text swanctl.conf
+    pools {
+        rw-pool {
+            addrs = 10.3.0.0/24
+            dns   = 10.1.0.1
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="SQL-backed pools (attr-sql)">
+    The `attr-sql` plugin stores pool allocations in a SQL database (SQLite or MySQL/MariaDB), persisting leases across restarts and enabling static address assignment.
+
+    Configure the plugin in `strongswan.d/charon/attr-sql.conf`:
+
+    ```text attr-sql.conf
+    plugins {
+        attr-sql {
+            load     = yes
+            database = sqlite:///var/lib/strongswan/ipsec.db
+        }
+    }
+    ```
+
+    Manage pools with the `ipsec pool` command (legacy) or by populating the database directly. SQL pools are referenced by name in the same way as in-memory pools.
+
+    <Info>
+      SQL-backed pools support static IP assignment: bind a specific address to a client identity in the database, and the client always receives that address.
+    </Info>
+  </Tab>
+</Tabs>
+
+---
+
+## Complete example
+
+A roadwarrior server assigning IPv4 addresses from a `/24` pool with DNS pushed to clients:
+
+```text swanctl.conf
+connections {
+    rw {
+        version      = 2
+        local_addrs  = 192.0.2.1
+        remote_addrs = %any
+        pools        = rw-v4, rw-v6
+
+        local {
+            auth  = pubkey
+            certs = server-cert.pem
+            id    = server.example.org
+        }
+        remote {
+            auth   = eap-mschapv2
+            eap_id = %any
+        }
+
+        children {
+            rw {
+                local_ts     = 0.0.0.0/0
+                remote_ts    = dynamic
+                mode         = tunnel
+                start_action = none
+                esp_proposals = aes256gcm16-prfsha256-ecp256
+            }
+        }
+    }
+}
+
+pools {
+    rw-v4 {
+        addrs = 10.3.0.0/24
+        dns   = 10.1.0.1
+    }
+    rw-v6 {
+        addrs = fd12:3456::/48
+        dns   = fd12:3456::1
+    }
+}
+
+secrets {
+    eap-alice {
+        id     = alice
+        secret = "alice-secret"
+    }
+}
+```

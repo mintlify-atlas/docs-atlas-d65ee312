@@ -1,0 +1,139 @@
+---
+title: "swanctl --rekey"
+description: Trigger rekeying or reauthentication of an IKE or CHILD Security Association.
+sidebarTitle: "--rekey"
+---
+
+The `--rekey` command asks the strongSwan IKE daemon to immediately rekey an
+existing Security Association, replacing its cryptographic material without
+tearing down the tunnel. For IKEv2 IKE_SAs you can optionally trigger a full
+reauthentication instead.
+
+## Synopsis
+
+```bash
+swanctl --rekey --child <name> | --ike <name> |
+                --child-id <id> | --ike-id <id>
+        [--reauth] [--raw|--pretty]
+```
+
+<Note>
+You must specify exactly one selector: `--child`, `--ike`, `--child-id`, or
+`--ike-id`. `--reauth` is only meaningful when rekeying an IKE_SA; it has no
+effect on CHILD_SAs.
+</Note>
+
+## Options
+
+<ParamField path="--child" type="string">
+  Rekey all CHILD_SAs that match the given configuration name. A CREATE_CHILD_SA
+  exchange negotiates fresh keys; the old CHILD_SA is deleted once the new one
+  is installed.
+</ParamField>
+
+<ParamField path="--ike" type="string">
+  Rekey the IKE_SA matching the given configuration name. strongSwan uses an
+  IKE_SA rekeying exchange (RFC 7296 §2.18) to establish new IKE keys.
+</ParamField>
+
+<ParamField path="--child-id" type="integer">
+  Rekey a single CHILD_SA by its unique numeric identifier. Use
+  `swanctl --list-sas` to find the ID (shown as `#<id>` next to the CHILD_SA
+  name).
+</ParamField>
+
+<ParamField path="--ike-id" type="integer">
+  Rekey a single IKE_SA by its unique numeric identifier.
+</ParamField>
+
+<ParamField path="--reauth" type="boolean">
+  Reauthenticate the IKE_SA instead of rekeying it. Reauthentication starts a
+  completely new IKE_SA (new IKE_SA init + authentication exchanges) while the
+  existing SA stays active until the new one is established. Only valid with
+  `--ike` or `--ike-id`.
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Print the raw VICI response message.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Print the raw VICI response with pretty-print indentation. Implies `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI. Overrides the default `unix:///var/run/charon.vici`.
+</ParamField>
+
+## Examples
+
+### Rekey a CHILD_SA by config name
+
+```bash
+swanctl --rekey --child net-net
+```
+
+Expected output:
+
+```
+rekey completed successfully
+```
+
+The daemon performs a `CREATE_CHILD_SA` exchange in the background. If the
+rekey succeeds, the old CHILD_SA is deleted and the new one takes over
+without interrupting traffic flow.
+
+### Rekey an IKE_SA by config name
+
+```bash
+swanctl --rekey --ike roadwarrior
+```
+
+### Rekey a specific SA by unique ID
+
+When you have multiple active SAs from the same configuration, target one
+precisely with its ID from `swanctl --list-sas`:
+
+```bash
+swanctl --rekey --child-id 5
+swanctl --rekey --ike-id 2
+```
+
+### Reauthenticate an IKE_SA
+
+Force a full reauthentication, which re-runs IKE_SA_INIT and IKE_AUTH:
+
+```bash
+swanctl --rekey --ike roadwarrior --reauth
+```
+
+<Info>
+Rekeying replaces the session keys of an existing SA without re-running
+authentication. Reauthentication (`--reauth`) also re-verifies peer
+identity, which is required when client certificates or EAP credentials
+have changed.
+</Info>
+
+## Rekey vs. reauthenticate
+
+| | `--rekey` | `--reauth` |
+|---|---|---|
+| Creates new keys | Yes | Yes |
+| Re-runs authentication | No | Yes |
+| Applicable to CHILD_SA | Yes | No |
+| Applicable to IKE_SA | Yes | Yes |
+| Traffic interruption | None | Brief (new SA established first) |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Rekey initiated successfully |
+| `1` | Rekey failed (error message printed to stderr) |
+| other | Connection to VICI socket failed or unexpected error |
+
+## See also
+
+- [`swanctl --list-sas`](/reference/swanctl/list-sas) — view current SAs and find IDs
+- [`swanctl --terminate`](/reference/swanctl/terminate) — fully delete an SA
+- [`swanctl --initiate`](/reference/swanctl/initiate) — bring up a new SA

@@ -1,0 +1,180 @@
+---
+title: "Python vici Module"
+description: "Pure Python implementation of the VICI protocol for building management scripts"
+---
+
+## Overview
+
+The `vici` Python module is a pure-Python implementation of the VICI protocol. It lives in the `python/` subdirectory of the vici plugin source tree. The `Session` class provides a high-level interface that maps directly to VICI commands; the underlying `Transport`, `Packet`, and `Message` classes are not needed for typical applications.
+
+## Installation
+
+The module is built as a Python wheel when strongSwan is configured with:
+
+```sh
+./configure --enable-vici --enable-python-wheels
+```
+
+<Note>
+The wheel is built but not installed automatically. Install it manually from the build output directory or via `pip` once you have the `.whl` file.
+</Note>
+
+## Connecting to the Daemon
+
+Create a connected socket and pass it to `vici.Session()`. If no socket is passed, the constructor connects to `/var/run/charon.vici` automatically (on Linux/macOS) or to `127.0.0.1:4502` on Windows.
+
+```python
+import vici
+import socket
+
+s = socket.socket(socket.AF_UNIX)
+s.connect("/var/run/charon.vici")
+v = vici.Session(s)
+```
+
+Passing a pre-connected socket gives you control over socket options such as timeouts:
+
+```python
+import vici
+import socket
+
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5.0)
+s.connect("/var/run/charon.vici")
+v = vici.Session(s)
+```
+
+<Note>
+If a timeout is set on the socket, the internal read code disables it temporarily after receiving the first byte to avoid partial read corruption.
+</Note>
+
+## A Simple Request
+
+Commands that return a single response dict are called as plain methods. The `version()` command returns daemon and system information:
+
+```python
+ver = v.version()
+print("{daemon} {version} ({sysname}, {release}, {machine})".format(**ver))
+```
+
+The returned dict uses `bytes` values. Use `.decode()` where a plain string is needed.
+
+## Streaming Responses
+
+Commands that emit a stream of events (such as `list-conns`, `list-sas`, `list-certs`) return a Python **generator**. Iterate over it to consume each event dict:
+
+```python
+for conn in v.list_conns():
+    for key in conn:
+        print(key)
+```
+
+<Warning>
+If you do not iterate the generator to exhaustion, you must close it explicitly:
+
+```python
+gen = v.list_conns()
+try:
+    first = next(gen)
+finally:
+    gen.close()
+```
+
+Breaking out of a `for` loop closes the generator implicitly. Calling `next()` directly requires an explicit `close()` call when you are done.
+</Warning>
+
+## Initiating a Connection
+
+Commands that accept parameters take a dict argument. `initiate()` also streams log messages as a generator:
+
+```python
+for log in v.initiate({'child': 'net-net'}):
+    print("{msg}".format(**log))
+```
+
+## Listening for Events
+
+Use `Session.listen()` to register for one or more event types and receive them as a generator of `(event_type, message)` tuples:
+
+```python
+for event_type, message in v.listen(['log', 'ike-updown']):
+    print(event_type, message)
+```
+
+Pass a `timeout` (in fractional seconds) to receive periodic `(None, None)` tuples when no event arrives, allowing you to perform housekeeping tasks without unregistering:
+
+```python
+for event_type, message in v.listen(['log'], timeout=1.0):
+    if event_type is None:
+        print("(no events in last second)")
+    else:
+        print(event_type, message)
+```
+
+## Data Types
+
+The session maps VICI message types to Python objects:
+
+| VICI type | Python type |
+|---|---|
+| Section | `collections.OrderedDict` |
+| Key/Value | `bytes` (dict value) |
+| List | `list` of `bytes` |
+
+<Info>
+In some VICI message trees, the order of keys matters. Python dicts do not preserve insertion order in all versions. Use `collections.OrderedDict` when constructing config parameters to guarantee ordering:
+
+```python
+from collections import OrderedDict
+
+conn = OrderedDict([
+    ('version', b'2'),
+    ('local_addrs', ['192.168.0.1']),
+])
+v.load_conn({'gw': conn})
+```
+
+Objects returned by the library always use `OrderedDict`.
+</Info>
+
+## Available Session Methods
+
+| Method | Description |
+|---|---|
+| `version()` | Daemon and system version information. |
+| `stats()` | IKE daemon statistics and load information. |
+| `reload_settings()` | Reload `strongswan.conf` and plugins that support reload. |
+| `initiate(sa)` | Initiate an SA; streams `control-log` events. |
+| `terminate(sa)` | Terminate an SA; streams `control-log` events. |
+| `rekey(sa)` | Initiate rekeying of an SA. |
+| `redirect(sa)` | Redirect an IKE_SA. |
+| `install(policy)` | Install a trap, drop or bypass policy. |
+| `uninstall(policy)` | Uninstall a policy. |
+| `list_sas(filters)` | Stream active IKE_SAs and CHILD_SAs. |
+| `list_policies(filters)` | Stream installed trap, drop and bypass policies. |
+| `list_conns(filters)` | Stream loaded connection configurations. |
+| `get_conns()` | Names of connections loaded exclusively over vici. |
+| `list_certs(filters)` | Stream loaded certificates. |
+| `list_authorities(filters)` | Stream loaded CA definitions. |
+| `get_authorities()` | Names of CAs loaded exclusively over vici. |
+| `load_conn(connection)` | Load a connection definition into the daemon. |
+| `unload_conn(name)` | Unload a connection definition by name. |
+| `load_cert(certificate)` | Load a PEM or DER certificate. |
+| `load_key(private_key)` | Load a PEM or DER private key. |
+| `unload_key(key_id)` | Unload a private key by its identifier. |
+| `get_keys()` | Identifiers of private keys loaded over vici. |
+| `load_token(token)` | Load a private key from a hardware token. |
+| `load_shared(secret)` | Load a shared PSK, EAP or XAuth secret. |
+| `unload_shared(identifier)` | Unload a shared secret by its identifier. |
+| `get_shared()` | Identifiers of shared secrets loaded over vici. |
+| `flush_certs(filter)` | Flush the volatile certificate cache. |
+| `clear_creds()` | Clear all credentials loaded over vici. |
+| `load_authority(ca)` | Load a CA definition. |
+| `unload_authority(ca)` | Unload a CA definition by name. |
+| `load_pool(pool)` | Load a virtual IP and attribute pool. |
+| `unload_pool(pool_name)` | Unload a virtual IP pool by name. |
+| `get_pools(options)` | List currently loaded pools. |
+| `get_algorithms()` | Currently loaded algorithms and their implementations. |
+| `get_counters(options)` | Global or per-connection IKE event counters. |
+| `reset_counters(options)` | Reset IKE event counters. |
+| `listen(event_types, timeout)` | Register and stream arbitrary events. |

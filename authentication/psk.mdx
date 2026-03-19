@@ -1,0 +1,203 @@
+---
+title: "Pre-Shared Key (PSK) Authentication"
+description: "Authenticate VPN peers using a shared secret key"
+---
+
+Pre-Shared Key (PSK) authentication uses a secret known to both peers before the IKE negotiation begins. While simpler to deploy than certificates, PSK is best suited for small, fixed deployments where managing a PKI is impractical.
+
+<Warning>
+PSK authentication does not provide identity protection against an active man-in-the-middle attacker. Use certificates for production deployments or any scenario where strong mutual authentication is required. If PSK is necessary, use long, randomly generated secrets — short or dictionary-based passphrases are vulnerable to offline brute-force attacks, especially in IKEv1 Aggressive Mode.
+</Warning>
+
+## When to Use PSK
+
+<CardGroup cols={2}>
+  <Card title="Good fit" icon="check">
+    - Lab environments and quick testing
+    - Fixed site-to-site tunnels between trusted devices
+    - Embedded devices where certificate management is impractical
+    - Interoperability with older peers that lack certificate support
+  </Card>
+  <Card title="Not recommended" icon="xmark">
+    - Road-warrior / remote access scenarios with many clients
+    - Any deployment using IKEv1 Aggressive Mode
+    - Environments requiring per-user authentication accountability
+    - High-security deployments where compromise of one secret affects all peers
+  </Card>
+</CardGroup>
+
+## Basic Configuration
+
+<Tabs>
+  <Tab title="Site-to-Site">
+    ```ini
+    # /etc/swanctl/swanctl.conf
+    connections {
+      site-to-site {
+        local_addrs  = 192.168.1.1
+        remote_addrs = 192.168.2.1
+
+        local {
+          auth = psk
+          id   = 192.168.1.1
+        }
+
+        remote {
+          auth = psk
+          id   = 192.168.2.1
+        }
+
+        children {
+          tunnel {
+            local_ts  = 10.0.1.0/24
+            remote_ts = 10.0.2.0/24
+          }
+        }
+      }
+    }
+
+    secrets {
+      ike-site {
+        id     = 192.168.1.1
+        id2    = 192.168.2.1
+        secret = "Xk9#mP2vLq8rTn5jWz3cYd7b"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Road Warrior (Server)">
+    ```ini
+    # /etc/swanctl/swanctl.conf
+    connections {
+      roadwarrior {
+        local_addrs  = 203.0.113.1
+        remote_addrs = %any
+
+        local {
+          auth = psk
+          id   = vpn.example.org
+        }
+
+        remote {
+          auth = psk
+          id   = %any
+        }
+
+        pools    = vip-pool
+        children {
+          rw {
+            local_ts  = 0.0.0.0/0
+            remote_ts = dynamic
+          }
+        }
+      }
+    }
+
+    secrets {
+      # Shared by all road-warrior clients
+      ike-rw {
+        secret = "Rx5!kTp9vMn2qWs8jLd4cZb6"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## The secrets Section
+
+PSK secrets are defined under the `secrets` section using an `ike` prefix:
+
+```ini
+secrets {
+  ike-<name> {
+    # One or more identities that share this secret
+    id  = 192.168.0.1
+    id2 = 192.168.0.2
+
+    # ASCII passphrase
+    secret = "MySecret123"
+
+    # Or hex-encoded (prefix with 0x)
+    # secret = 0x4d7953656372657431323300
+
+    # Or Base64-encoded (prefix with 0s)
+    # secret = 0sN3g2c2VjcmV0
+  }
+}
+```
+
+### Secret Selection by Identity
+
+strongSwan matches secrets to connections using the `id` entries:
+
+1. If an `id` in the secret matches the local or remote IKE identity, that secret is used.
+2. If no specific match exists, a secret with no `id` entries (or `%any`) is used as a fallback.
+3. If multiple secrets match, strongSwan tries them in order.
+
+```ini
+secrets {
+  # Used only when peer identity is peer-a.example.org
+  ike-peer-a {
+    id     = peer-a.example.org
+    secret = "SecretForPeerA!"
+  }
+
+  # Fallback for any other peer
+  ike-default {
+    secret = "DefaultSharedSecret"
+  }
+}
+```
+
+<Note>
+When `remote { id = %any }` is set on the connection, any peer identity is accepted. The secret is still selected by identity matching — if no id-specific secret matches the peer's presented identity, the fallback secret is used.
+</Note>
+
+## IKEv1 and Aggressive Mode
+
+<Warning>
+**IKEv1 Aggressive Mode with PSK is cryptographically weak.** In Aggressive Mode (`aggressive = yes`), the IKE identity and hash are exchanged without encryption. A passive attacker can capture the exchange and perform offline dictionary or brute-force attacks against the PSK. Avoid this combination entirely for sensitive deployments.
+</Warning>
+
+Main Mode (the IKEv1 default) provides identity protection by encrypting the identity payloads, but the PSK still must be looked up before the identity is authenticated. This requires the remote identity to be known in advance (e.g., by IP address) to select the correct secret.
+
+```ini
+connections {
+  ikev1-site {
+    version = 1
+    # aggressive = no  (Main Mode is the default — keep it)
+
+    local {
+      auth = psk
+      id   = 10.0.0.1
+    }
+    remote {
+      auth = psk
+      id   = 10.0.0.2
+    }
+  }
+}
+```
+
+## Choosing Strong Secrets
+
+Generate a cryptographically random PSK rather than using a passphrase:
+
+```bash
+# Generate a 32-byte (256-bit) random PSK in hex
+openssl rand -hex 32
+
+# Or in Base64
+openssl rand -base64 32
+```
+
+Then reference it in `swanctl.conf` with the appropriate prefix:
+
+```ini
+secrets {
+  ike-generated {
+    id     = peer.example.org
+    secret = 0x8f3a2b1c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a
+  }
+}
+```

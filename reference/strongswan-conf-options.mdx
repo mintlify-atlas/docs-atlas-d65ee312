@@ -1,0 +1,307 @@
+---
+title: "strongswan.conf configuration reference"
+description: Complete reference for strongswan.conf daemon and plugin configuration options.
+---
+
+`strongswan.conf` configures the strongSwan daemon (charon) and its plugins. It uses a hierarchical key-value format with `{}` sections.
+
+The distributed default `strongswan.conf` uses modular loading:
+
+```
+charon {
+  load_modular = yes
+  plugins {
+    include strongswan.d/charon/*.conf
+  }
+}
+
+include strongswan.d/*.conf
+```
+
+<Tip>
+  Place your site-specific settings in files under `strongswan.d/` rather than editing the main `strongswan.conf` directly. This simplifies package upgrades.
+</Tip>
+
+---
+
+## charon section
+
+The `charon` section configures the IKE daemon.
+
+### Core settings
+
+<ParamField path="load_modular" type="boolean" default="no">
+  Use modular plugin loading controlled by per-plugin `.conf` files in `strongswan.d/charon/`. When `yes`, the `load` keyword in the main config is ignored and each plugin's own config file controls whether it is loaded.
+</ParamField>
+
+<ParamField path="threads" type="number" default="16">
+  Number of worker threads for processing IKE messages and crypto operations. Increase on high-throughput systems.
+</ParamField>
+
+<ParamField path="ikesa_table_size" type="number" default="1">
+  Size of the hash table used to index IKE SAs.
+</ParamField>
+
+<ParamField path="ikesa_table_segments" type="number" default="1">
+  Number of segments in the IKE SA hash table for locking granularity.
+</ParamField>
+
+### Network and routing
+
+<ParamField path="install_routes" type="boolean" default="yes">
+  Install routes into the routing table for IPsec tunnel traffic selectors. Disable if you manage routes externally.
+</ParamField>
+
+<ParamField path="install_virtual_ip" type="boolean" default="yes">
+  Install negotiated virtual IP addresses on the local interface. Disable if your OS or routing daemon manages virtual IPs.
+</ParamField>
+
+<ParamField path="install_virtual_ip_on" type="string">
+  Interface name on which to install virtual IP addresses. Defaults to the interface used for the IKE SA.
+</ParamField>
+
+<ParamField path="keep_alive" type="number" default="20">
+  NAT keepalive interval in seconds. Sends UDP keepalive packets to maintain NAT mappings.
+</ParamField>
+
+<ParamField path="prefer_best_path" type="boolean" default="no">
+  During MOBIKE path re-selection, prefer the path with the lowest route metric over the currently active path.
+</ParamField>
+
+### IKE SA management
+
+<ParamField path="half_open_timeout" type="number" default="30">
+  Timeout in seconds to close IKE SAs that have not completed authentication. Protects against half-open SA exhaustion attacks.
+</ParamField>
+
+<ParamField path="max_ikesa_half_open" type="number">
+  Maximum number of simultaneously half-open IKE SAs. New connections are refused when the limit is reached.
+</ParamField>
+
+<ParamField path="reuse_ikesa" type="boolean" default="yes">
+  Re-use existing IKE SAs when initiating additional CHILD SAs to the same remote address and identity, rather than creating a new IKE SA.
+</ParamField>
+
+<ParamField path="retry_initiate_interval" type="number" default="0">
+  Interval in seconds between retries when connection initiation fails. `0` disables retry.
+</ParamField>
+
+<ParamField path="send_vendor_id" type="boolean" default="no">
+  Send the strongSwan vendor ID payload in IKE exchanges. Enables vendor-specific features but reveals the software identity.
+</ParamField>
+
+### Certificate and revocation
+
+<ParamField path="cache_crls" type="boolean" default="no">
+  Cache downloaded CRLs to the local filesystem under `/etc/ipsec.d/crls/`.
+</ParamField>
+
+<ParamField path="ocsp_nonce_len" type="number" default="32">
+  Length of OCSP nonce values in bytes. `0` disables nonces.
+</ParamField>
+
+<ParamField path="x509_strict" type="boolean" default="no">
+  Apply strict X.509 certificate validation. Rejects certificates that do not conform strictly to RFC 5280.
+</ParamField>
+
+### Security
+
+<ParamField path="i_dont_care_about_security_and_use_aggressive_mode_psk" type="boolean" default="no">
+  Permit IKEv1 Aggressive Mode with PSK authentication. Disabled by default because Aggressive Mode PSK is vulnerable to offline dictionary attacks. Only enable if peer compatibility requires it.
+</ParamField>
+
+<ParamField path="rdn_matching" type="string" default="strict">
+  Distinguished Name matching mode for wildcard remote identity matching. Accepted values: `strict`, `reordered`, `relaxed`.
+</ParamField>
+
+---
+
+## Logging configuration
+
+Logging is configured inside the `charon` section using `filelog` and `syslog` subsections.
+
+```
+charon {
+  filelog {
+    /var/log/strongswan.log {
+      default = 1
+      append = yes
+      flush_line = yes
+      ike = 2
+      net = 1
+      cfg = 1
+    }
+    stderr {
+      default = 1
+    }
+  }
+  syslog {
+    daemon {
+      default = 1
+    }
+  }
+}
+```
+
+### Log levels
+
+| Level | Meaning |
+|---|---|
+| `-1` | Absolute silence |
+| `0` | Errors only |
+| `1` | Informational (recommended for production) |
+| `2` | Control-flow debug |
+| `3` | Detailed debug |
+| `4` | Full trace (very verbose) |
+
+### Log subsystems
+
+Within a log target, each subsystem level can be set independently:
+
+| Key | Subsystem |
+|---|---|
+| `ike` | IKE SA establishment and management |
+| `chd` | CHILD SA establishment |
+| `net` | IKE network I/O |
+| `enc` | Message encoding/decoding |
+| `cfg` | Configuration loading |
+| `knl` | Kernel interface (policies, SAs) |
+| `esp` | ESP processing |
+| `mgr` | IKE SA manager |
+| `lib` | libstrongswan |
+
+<Note>
+  `default` sets the level for all subsystems not explicitly listed in the same block.
+</Note>
+
+### filelog options
+
+<ParamField path="append" type="boolean" default="yes">
+  Append to the log file. Set to `no` to truncate the file on daemon start.
+</ParamField>
+
+<ParamField path="flush_line" type="boolean" default="no">
+  Flush the log file after each line. Useful for real-time monitoring but reduces write performance.
+</ParamField>
+
+<ParamField path="time_format" type="string">
+  `strftime(3)` format string for log timestamps. Example: `"%b %e %T"`.
+</ParamField>
+
+<ParamField path="ike_name" type="boolean" default="no">
+  Include the IKE SA name in each log line.
+</ParamField>
+
+---
+
+## Plugin configuration
+
+Plugins are configured in subsections under `charon.plugins`. With `load_modular = yes`, each plugin also has a dedicated file in `strongswan.d/charon/<plugin>.conf`.
+
+### eap-radius
+
+```
+charon {
+  plugins {
+    eap-radius {
+      servers {
+        main {
+          address = radius.example.com
+          secret = sharedsecret
+          auth_port = 1812
+          acct_port = 1813
+        }
+      }
+      nas_identifier = strongSwan
+    }
+  }
+}
+```
+
+### attr
+
+Pushes configuration attributes (DNS, routes) to clients:
+
+```
+charon {
+  plugins {
+    attr {
+      dns = 8.8.8.8, 8.8.4.4
+      split_include = 10.0.0.0/8
+    }
+  }
+}
+```
+
+### dhcp
+
+Obtains virtual IPs and attributes from a DHCP server:
+
+```
+charon {
+  plugins {
+    dhcp {
+      server = 192.168.1.1
+      identity_lease = yes
+    }
+  }
+}
+```
+
+### kernel-netlink (Linux)
+
+```
+charon {
+  plugins {
+    kernel-netlink {
+      fwmark = !0x4000
+      mtu = 1400
+    }
+  }
+}
+```
+
+<ParamField path="plugins.kernel-netlink.fwmark" type="string">
+  Netfilter mark applied to IKE packets. Use `!<mark>` to exclude marked packets from IPsec policies (useful to avoid routing loops).
+</ParamField>
+
+<ParamField path="plugins.kernel-netlink.mtu" type="number">
+  MTU set on the virtual IP interface.
+</ParamField>
+
+---
+
+## Full minimal example
+
+```
+charon {
+  load_modular = yes
+  threads = 16
+  install_routes = yes
+  install_virtual_ip = yes
+  cache_crls = no
+  reuse_ikesa = yes
+  send_vendor_id = no
+  keep_alive = 20
+  half_open_timeout = 30
+
+  filelog {
+    /var/log/strongswan.log {
+      default = 1
+      append = yes
+      flush_line = yes
+    }
+  }
+  syslog {
+    daemon {
+      default = 1
+    }
+  }
+
+  plugins {
+    include strongswan.d/charon/*.conf
+  }
+}
+
+include strongswan.d/*.conf
+```

@@ -1,122 +1,178 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "strongSwan",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#040404",
+    "light": "#da0d38",
+    "dark": "#504749"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/72dd29eb-d389-4891-84de-97fcde94bca1.png",
+  "logo": {
+    "light": "https://media.brand.dev/a514841e-f917-4cc5-bb84-102e4ec47bad.svg",
+    "dark": "https://media.brand.dev/a514841e-f917-4cc5-bb84-102e4ec47bad.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/strongswan/strongswan"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/strongswan/strongswan"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Configuration",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "configuration/swanctl-conf",
+              "configuration/strongswan-conf",
+              "configuration/credentials",
+              "configuration/virtual-ip-pools"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "VPN Scenarios",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "scenarios/site-to-site",
+              "scenarios/host-to-host",
+              "scenarios/roadwarrior",
+              "scenarios/roadwarrior-eap"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Authentication",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "authentication/certificates",
+              "authentication/psk",
+              "authentication/eap",
+              "authentication/xauth"
+            ]
+          },
+          {
+            "group": "PKI & Certificates",
+            "pages": [
+              "pki/overview",
+              "pki/ca-setup",
+              "pki/generate-certificates",
+              "pki/crl-management"
+            ]
+          },
+          {
+            "group": "Plugins",
+            "pages": [
+              "plugins/overview",
+              "plugins/kernel-backends",
+              "plugins/crypto-plugins",
+              "plugins/eap-plugins"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/swanctl-commands",
+              "operations/monitoring",
+              "operations/logging",
+              "operations/high-availability"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/tpm2",
+              "advanced/android",
+              "advanced/nat-traversal",
+              "advanced/traffic-selectors"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "VICI Protocol",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "vici/overview",
+              "vici/protocol"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Commands",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "vici/commands/connection-management",
+              "vici/commands/sa-management",
+              "vici/commands/credential-management",
+              "vici/commands/query-commands"
+            ]
+          },
+          {
+            "group": "Events",
+            "pages": [
+              "vici/events/sa-events",
+              "vici/events/log-events"
+            ]
+          },
+          {
+            "group": "Client Libraries",
+            "pages": [
+              "vici/clients/libvici-c",
+              "vici/clients/python",
+              "vici/clients/ruby",
+              "vici/clients/perl"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "swanctl",
+            "pages": [
+              "reference/swanctl/initiate",
+              "reference/swanctl/terminate",
+              "reference/swanctl/rekey",
+              "reference/swanctl/list-sas",
+              "reference/swanctl/load-all",
+              "reference/swanctl/list-certs"
+            ]
+          },
+          {
+            "group": "pki",
+            "pages": [
+              "reference/pki/gen",
+              "reference/pki/self",
+              "reference/pki/issue",
+              "reference/pki/req",
+              "reference/pki/signcrl",
+              "reference/pki/print",
+              "reference/pki/verify"
+            ]
+          },
+          {
+            "group": "Configuration Reference",
+            "pages": [
+              "reference/swanctl-conf-options",
+              "reference/strongswan-conf-options"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

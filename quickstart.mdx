@@ -1,80 +1,185 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get a site-to-site IPsec VPN tunnel running quickly with swanctl.
 ---
 
-## Get started in three steps
+This guide walks you through setting up a site-to-site IPsec VPN tunnel between two gateways using the `swanctl` command-line tool and the modern VICI configuration interface.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- Linux kernel 4.5 or later (with `esp4`, `esp6`, and `xfrm_user` modules available)
+- strongSwan installed with `swanctl` and the `charon` daemon running
+- X.509 certificates issued by a common CA for both gateways
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Note>
+Kernel modules (`esp4`, `esp6`, `xfrm_user`) are loaded automatically when needed on most distributions. Run `modprobe xfrm_user` to load manually if required.
+</Note>
 
-### Step 2: Deploy your changes
+## Network topology
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+In this example, gateways **moon** and **sun** connect two private subnets through an encrypted IPsec tunnel:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```
+10.1.0.0/16 -- | 192.168.0.1 | === | 192.168.0.2 | -- 10.2.0.0/16
+  moon-net          moon                 sun           sun-net
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+## Configure gateway moon
 
-### Step 3: Go live
+Place the following credential files on **moon**:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```
+/etc/swanctl/x509ca/strongswanCert.pem   # CA certificate
+/etc/swanctl/x509/moonCert.pem           # moon's end-entity certificate
+/etc/swanctl/private/moonKey.pem         # moon's private key
+```
+
+Create `/etc/swanctl/swanctl.conf` on **moon**:
+
+```hcl /etc/swanctl/swanctl.conf
+connections {
+    net-net {
+        remote_addrs = 192.168.0.2
+
+        local {
+            auth = pubkey
+            certs = moonCert.pem
+        }
+        remote {
+            auth = pubkey
+            id = "C=CH, O=strongSwan, CN=sun.strongswan.org"
+        }
+        children {
+            net-net {
+                local_ts  = 10.1.0.0/16
+                remote_ts = 10.2.0.0/16
+                start_action = trap
+            }
+        }
+    }
+}
+```
+
+## Configure gateway sun
+
+Place the following credential files on **sun**:
+
+```
+/etc/swanctl/x509ca/strongswanCert.pem   # CA certificate
+/etc/swanctl/x509/sunCert.pem            # sun's end-entity certificate
+/etc/swanctl/private/sunKey.pem          # sun's private key
+```
+
+Create `/etc/swanctl/swanctl.conf` on **sun**:
+
+```hcl /etc/swanctl/swanctl.conf
+connections {
+    net-net {
+        remote_addrs = 192.168.0.1
+
+        local {
+            auth = pubkey
+            certs = sunCert.pem
+        }
+        remote {
+            auth = pubkey
+            id = "C=CH, O=strongSwan, CN=moon.strongswan.org"
+        }
+        children {
+            net-net {
+                local_ts  = 10.2.0.0/16
+                remote_ts = 10.1.0.0/16
+                start_action = trap
+            }
+        }
+    }
+}
+```
+
+<Note>
+The identities (`id`) are the Subject Distinguished Names from the peer's end-entity certificate. The `start_action = trap` setting installs a policy that automatically initiates the tunnel when the first matching plaintext packet is seen.
+</Note>
+
+## Bring up the tunnel
+
+Run the following commands on **both** gateways after placing the configuration files.
+
+<Steps>
+  <Step title="Load credentials">
+    Load certificates, CA certificates, and private keys into the charon daemon:
+
+    ```bash
+    swanctl --load-creds
+    ```
+
+    Expected output confirms the number of loaded certificates and keys:
+
+    ```
+    loaded certificate from '/etc/swanctl/x509/moonCert.pem'
+    loaded certificate from '/etc/swanctl/x509ca/strongswanCert.pem'
+    loaded private key from '/etc/swanctl/private/moonKey.pem'
+    ```
+  </Step>
+
+  <Step title="Load connections">
+    Load connection definitions from `swanctl.conf`:
+
+    ```bash
+    swanctl --load-conns
+    ```
+
+    Expected output:
+
+    ```
+    loaded connection 'net-net'
+    ```
+  </Step>
+
+  <Step title="Verify the tunnel">
+    Send traffic from the `moon-net` subnet toward `sun-net` to trigger the `trap` policy and establish the tunnel. Then verify the active Security Associations:
+
+    ```bash
+    swanctl --list-sas
+    ```
+
+    A successful tunnel shows an established IKE SA and a CHILD SA with the negotiated traffic selectors:
+
+    ```
+    net-net: #1, ESTABLISHED, IKEv2, ...
+      net-net: #1, reqid 1, INSTALLED, TUNNEL, ESP:AES_CBC-128/HMAC_SHA2_256_128
+        local  10.1.0.0/16
+        remote 10.2.0.0/16
+    ```
+  </Step>
+</Steps>
+
+## Directory structure reference
+
+The default `swanctl` configuration directory layout:
+
+```
+/etc/swanctl/
+├── swanctl.conf          # Connection and pool definitions
+├── x509ca/               # Trusted CA certificates (PEM or DER)
+├── x509/                 # End-entity certificates (PEM or DER)
+├── private/              # Private keys (PEM or DER)
+├── x509crl/              # Certificate revocation lists
+└── pkcs12/               # PKCS#12 bundles
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="VPN scenarios" icon="network-wired" href="/scenarios/site-to-site">
+    Explore host-to-host, roadwarrior, and EAP authentication scenarios
+  </Card>
+  <Card title="PKI & certificates" icon="certificate" href="/pki/overview">
+    Generate your own CA, issue certificates, and manage CRLs with the pki tool
+  </Card>
+  <Card title="swanctl commands" icon="terminal" href="/operations/swanctl-commands">
+    Full reference for all swanctl subcommands and options
+  </Card>
+  <Card title="swanctl.conf options" icon="gear" href="/configuration/swanctl-conf">
+    Complete reference for connection, pool, and secret configuration
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

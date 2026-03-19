@@ -1,0 +1,311 @@
+---
+title: "SA Management Commands"
+description: "VICI commands for initiating, terminating, and rekeying IKE and CHILD Security Associations."
+---
+
+These commands control the lifecycle of IKE and CHILD Security Associations (SAs) in the running daemon.
+
+## initiate
+
+Initiate a CHILD_SA while streaming `control-log` events. The command blocks (or times out) until the initiation completes or fails.
+
+**Input**
+
+<ParamField body="child" type="string">
+  Name of the CHILD_SA configuration to initiate.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Name of the IKE_SA configuration to initiate, or to search under when looking up `child`.
+</ParamField>
+
+<ParamField body="timeout" type="string">
+  Timeout in milliseconds before returning. `0` (default) waits indefinitely. `-1` returns immediately without waiting for a result.
+</ParamField>
+
+<ParamField body="init-limits" type="string">
+  Set to `yes` to allow configured limits (e.g. half-open SA limits) to prevent initiation.
+</ParamField>
+
+<ParamField body="loglevel" type="string">
+  Log level (0–4) at which to emit `control-log` events during initiation.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` if the CHILD_SA was established, `no` on failure or timeout.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure or timeout.
+</ResponseField>
+
+**Python example**
+
+```python
+for log in v.initiate({"child": "net-net", "loglevel": "2"}):
+    print(log[b"msg"].decode())
+```
+
+---
+
+## terminate
+
+Terminate one or more SAs while streaming `control-log` events. You can select SAs by configuration name or unique identifier.
+
+**Input**
+
+<ParamField body="child" type="string">
+  Terminate all CHILD_SAs with this configuration name.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Terminate the IKE_SA with this configuration name (and its CHILD_SAs).
+</ParamField>
+
+<ParamField body="child-id" type="string">
+  Terminate the CHILD_SA with this unique numeric identifier.
+</ParamField>
+
+<ParamField body="ike-id" type="string">
+  Terminate the IKE_SA with this unique numeric identifier.
+</ParamField>
+
+<ParamField body="force" type="string">
+  Set to `yes` to terminate the IKE_SA without waiting for a proper DELETE exchange. If `timeout` is also given, waits for a response until the timeout is reached.
+</ParamField>
+
+<ParamField body="timeout" type="string">
+  Timeout in milliseconds before returning. `0` (default) waits indefinitely. `-1` returns immediately.
+</ParamField>
+
+<ParamField body="loglevel" type="string">
+  Log level (0–4) at which to emit `control-log` events during termination.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="matches" type="string">
+  Number of SAs that matched the selection criteria.
+</ResponseField>
+
+<ResponseField name="terminated" type="string">
+  Number of SAs that were actually terminated.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure or timeout.
+</ResponseField>
+
+---
+
+## rekey
+
+Initiate rekeying of an existing SA. For IKEv2 IKE_SAs, reauthentication can be triggered instead of rekeying.
+
+**Input**
+
+<ParamField body="child" type="string">
+  Rekey the CHILD_SA with this configuration name.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Rekey the IKE_SA with this configuration name.
+</ParamField>
+
+<ParamField body="child-id" type="string">
+  Rekey the CHILD_SA with this unique identifier.
+</ParamField>
+
+<ParamField body="ike-id" type="string">
+  Rekey the IKE_SA with this unique identifier.
+</ParamField>
+
+<ParamField body="reauth" type="string">
+  Set to `yes` to trigger reauthentication instead of rekeying for an IKEv2 IKE_SA.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="matches" type="string">
+  Number of SAs that matched the selection criteria.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## redirect
+
+Redirect a client-initiated IKE_SA to another gateway. Only applies to IKEv2 and requires peer support.
+
+**Input**
+
+<ParamField body="ike" type="string">
+  Redirect the IKE_SA with this configuration name.
+</ParamField>
+
+<ParamField body="ike-id" type="string">
+  Redirect the IKE_SA with this unique identifier.
+</ParamField>
+
+<ParamField body="peer-ip" type="string">
+  Redirect IKE_SAs with a matching peer IP address. Accepts a single IP, a CIDR subnet, or an IP range.
+</ParamField>
+
+<ParamField body="peer-id" type="string">
+  Redirect IKE_SAs with a matching peer IKE identity. Wildcards are supported.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="matches" type="string">
+  Number of IKE_SAs that matched the selection criteria.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## install
+
+Install a trap, drop, or bypass policy defined by a CHILD_SA configuration without initiating an IKE exchange.
+
+**Input**
+
+<ParamField body="child" type="string" required>
+  Name of the CHILD_SA configuration whose policy to install.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Optional IKE_SA configuration name to narrow the search for `child`.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## uninstall
+
+Uninstall a trap, drop, or bypass policy previously installed for a CHILD_SA configuration.
+
+**Input**
+
+<ParamField body="child" type="string" required>
+  Name of the CHILD_SA configuration whose policy to uninstall.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Optional IKE_SA configuration name. If omitted, the first matching policy for `child` is removed.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` on success, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description on failure.
+</ResponseField>
+
+---
+
+## list-sas
+
+Stream all active IKE_SAs and their CHILD_SAs as `list-sa` events.
+
+This is a **streaming command**. Register for the [`list-sa`](/vici/events/sa-events#list-sa) event before issuing this command.
+
+**Input**
+
+<ParamField body="noblock" type="string">
+  Set to any value to use non-blocking mode (skip locked SAs instead of waiting).
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Filter results to IKE_SAs with this configuration name.
+</ParamField>
+
+<ParamField body="ike-id" type="string">
+  Filter results to the IKE_SA with this unique identifier.
+</ParamField>
+
+<ParamField body="child" type="string">
+  Filter results to IKE_SAs containing a CHILD_SA with this name.
+</ParamField>
+
+<ParamField body="child-id" type="string">
+  Filter results to IKE_SAs containing a CHILD_SA with this unique identifier.
+</ParamField>
+
+**Response**
+
+An empty message (`{}`). All SA data arrives via `list-sa` events.
+
+**Python example**
+
+```python
+for sa in v.list_sas():
+    for name, details in sa.items():
+        print(name, details[b"state"])
+```
+
+---
+
+## list-policies
+
+Stream all installed trap, drop, and bypass policies as `list-policy` events.
+
+This is a **streaming command**. Register for the [`list-policy`](/vici/events/sa-events#list-policy) event before issuing this command.
+
+**Input**
+
+<ParamField body="drop" type="string">
+  Set to `yes` to include drop policies.
+</ParamField>
+
+<ParamField body="pass" type="string">
+  Set to `yes` to include bypass (pass) policies.
+</ParamField>
+
+<ParamField body="trap" type="string">
+  Set to `yes` to include trap policies.
+</ParamField>
+
+<ParamField body="child" type="string">
+  Filter by CHILD_SA configuration name.
+</ParamField>
+
+<ParamField body="ike" type="string">
+  Filter by IKE_SA configuration name.
+</ParamField>
+
+**Response**
+
+An empty message (`{}`). All policy data arrives via `list-policy` events.

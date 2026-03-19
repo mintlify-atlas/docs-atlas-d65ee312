@@ -1,0 +1,115 @@
+---
+title: "swanctl --initiate"
+description: Initiate an IKE or CHILD Security Association via the VICI interface.
+sidebarTitle: "--initiate"
+---
+
+The `--initiate` command tells the strongSwan IKE daemon (`charon`) to establish a new Security Association. You can target a specific CHILD_SA configuration by name, optionally scoped to a parent IKE_SA.
+
+## Synopsis
+
+```bash
+swanctl --initiate [--child <name>] [--ike <name>] [--timeout <s>]
+                   [--loglevel <level>] [--raw|--pretty]
+```
+
+<Note>
+Either `--child` or `--ike` must be specified. If only `--ike` is given, the daemon initiates the IKE_SA itself without bringing up a CHILD_SA.
+</Note>
+
+## Options
+
+<ParamField path="--child" type="string">
+  Name of the CHILD_SA configuration to initiate. The CHILD_SA is defined inside
+  a `connections.<name>.children` block in `swanctl.conf`. Required unless
+  `--ike` is given without a CHILD_SA target.
+</ParamField>
+
+<ParamField path="--ike" type="string">
+  Name of the IKE_SA configuration. When used together with `--child`, this
+  scopes the CHILD_SA lookup to a specific IKE connection. When used alone,
+  initiates only the IKE_SA.
+</ParamField>
+
+<ParamField path="--timeout" type="integer" default="0">
+  Time in seconds to wait for the operation to complete before detaching.
+  `0` (default) waits indefinitely. Use a positive value to detach after the
+  given number of seconds and let the daemon continue in the background.
+</ParamField>
+
+<ParamField path="--loglevel" type="integer" default="1">
+  Verbosity of log messages streamed back over the `control-log` VICI event
+  during the operation. Range: `0` (errors only) to `4` (full debug output).
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Print the raw VICI response message instead of the formatted summary.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Print the raw VICI response with pretty-print indentation. Implies `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI to connect to. Overrides the default socket path
+  (`unix:///var/run/charon.vici`). Useful when running multiple daemon
+  instances or connecting over TCP.
+</ParamField>
+
+## Examples
+
+### Initiate a site-to-site CHILD_SA
+
+```bash
+swanctl --initiate --child net-net
+```
+
+Typical output while the negotiation is in progress:
+
+```
+[IKE] initiating IKE_SA net-net[1] to 192.168.0.2
+[IKE] sending cert request for "C=CH, O=strongSwan, CN=strongSwan CA"
+[IKE] received cert request for "C=CH, O=strongSwan, CN=strongSwan CA"
+[IKE] authentication of 'C=CH, O=strongSwan, CN=moon.strongswan.org' (myself) with RSA_EMSA_PKCS1_SHA2_256 successful
+[IKE] IKE_SA net-net[1] established between 192.168.0.1[moon.strongswan.org]...192.168.0.2[sun.strongswan.org]
+[CHD] CHILD_SA net-net{1} established with SPIs c1234567_i c89abcdef_o and TS 10.1.0.0/16 === 10.2.0.0/16
+initiate completed successfully
+```
+
+### Initiate a CHILD_SA under a named IKE_SA
+
+When a connection has multiple CHILD_SA configurations, use `--ike` to
+disambiguate if two connections share a CHILD_SA name:
+
+```bash
+swanctl --initiate --child home --ike roadwarrior
+```
+
+### Initiate with verbose logging
+
+```bash
+swanctl --initiate --child net-net --loglevel 3
+```
+
+### Non-blocking initiation
+
+Pass a short timeout to detach immediately and let the daemon establish the
+tunnel in the background:
+
+```bash
+swanctl --initiate --child net-net --timeout 1
+```
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | SA established successfully |
+| `1` | Initiation failed (error message printed to stderr) |
+| other | Connection to VICI socket failed or unexpected error |
+
+## See also
+
+- [`swanctl --terminate`](/reference/swanctl/terminate) — tear down an established SA
+- [`swanctl --list-sas`](/reference/swanctl/list-sas) — verify the SA is active after initiation
+- [`swanctl --load-all`](/reference/swanctl/load-all) — load configuration before initiating

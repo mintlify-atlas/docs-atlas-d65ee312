@@ -1,0 +1,452 @@
+---
+title: "swanctl.conf configuration reference"
+description: Complete reference for all swanctl.conf configuration options, covering connections, pools, secrets, and authorities.
+---
+
+`swanctl.conf` is the main configuration file for the `swanctl` VPN manager. It uses a hierarchical key-value syntax. The top-level sections are `connections`, `pools`, `secrets`, and `authorities`.
+
+<Tip>
+  You can split your configuration across multiple files using `include conf.d/*.conf` at the bottom of `swanctl.conf`.
+</Tip>
+
+---
+
+## connections
+
+Defines IKE connection configurations. Each connection is a named subsection.
+
+```
+connections {
+  <conn> {
+    ...
+  }
+}
+```
+
+### connections.\<conn\> — IKE connection settings
+
+<ParamField path="version" type="number" default="0">
+  IKE major version. `1` = IKEv1, `2` = IKEv2. The default `0` accepts both IKEv1 and IKEv2 as responder, and initiates with IKEv2.
+</ParamField>
+
+<ParamField path="local_addrs" type="string" default="%any">
+  Local address(es) for IKE communication, comma-separated. Accepts IPs, DNS names, CIDR subnets, or ranges. `%any` matches all addresses.
+</ParamField>
+
+<ParamField path="remote_addrs" type="string" default="%any">
+  Remote address(es) for IKE communication, comma-separated. To initiate a connection, at least one specific address or DNS name must be set.
+</ParamField>
+
+<ParamField path="local_port" type="number" default="500">
+  Local UDP port for IKE. When port 500 is used, automatic IKE port floating to port 4500 is enabled to handle NAT.
+</ParamField>
+
+<ParamField path="remote_port" type="number" default="500">
+  Remote UDP port for IKE. Floating to port 4500 applies when this is 500.
+</ParamField>
+
+<ParamField path="proposals" type="string" default="default">
+  Comma-separated IKE proposals to accept. Algorithms are separated by dashes within a proposal. `default` uses a safe set of supported algorithms.
+</ParamField>
+
+<ParamField path="vips" type="string">
+  Comma-separated virtual IPs to request via IKEv2 configuration payloads or IKEv1 Mode Config. Use `0.0.0.0` or `::` to request any address.
+</ParamField>
+
+<ParamField path="pools" type="string">
+  Comma-separated list of named IP pools (from the `pools` section or an external pool) to allocate virtual IPs from.
+</ParamField>
+
+<ParamField path="rekey_time" type="string" default="4h">
+  Time to schedule IKE SA rekeying. Refreshes key material using a Diffie-Hellman exchange without re-checking credentials. Set to `0` to disable.
+</ParamField>
+
+<ParamField path="reauth_time" type="string" default="0s">
+  Time to schedule IKE reauthentication. Recreates the IKE SA from scratch and re-evaluates credentials. Disabled by default.
+</ParamField>
+
+<ParamField path="over_time" type="string" default="10% of rekey/reauth time">
+  Hard IKE SA lifetime. If rekeying or reauthentication does not complete in time, the IKE SA is closed.
+</ParamField>
+
+<ParamField path="rand_time" type="string" default="equal to over_time">
+  Random time subtracted from `rekey_time` / `reauth_time` to avoid simultaneous rekeying on both peers.
+</ParamField>
+
+<ParamField path="mobike" type="boolean" default="yes">
+  Enable MOBIKE on IKEv2 connections. MOBIKE allows client mobility and server multi-homing. Has no effect on IKEv1.
+</ParamField>
+
+<ParamField path="aggressive" type="boolean" default="no">
+  Use Aggressive Mode in IKEv1. Aggressive Mode is less secure because peer identities are exchanged unprotected. Avoid unless required for compatibility.
+</ParamField>
+
+<ParamField path="dpd_delay" type="string" default="0s">
+  Interval for Dead Peer Detection (DPD) liveness checks. `0` disables active DPD.
+</ParamField>
+
+<ParamField path="dpd_timeout" type="string" default="0s">
+  DPD timeout for IKEv1 only. IKEv2 uses the standard retransmission mechanism.
+</ParamField>
+
+<ParamField path="send_certreq" type="boolean" default="yes">
+  Send certificate request payloads to offer trusted CA certificates to the peer. Disabling reduces initial packet size when many CAs are installed.
+</ParamField>
+
+<ParamField path="send_cert" type="string" default="ifasked">
+  Control when certificate payloads are sent. Accepted values: `ifasked` (only when a certificate request is received), `always`, `never`.
+</ParamField>
+
+<ParamField path="fragmentation" type="string" default="yes">
+  IKE fragmentation support. Accepted values: `yes`, `accept`, `force` (IKEv1 only), `no`.
+</ParamField>
+
+<ParamField path="encap" type="boolean" default="no">
+  Enforce UDP encapsulation of ESP packets by faking NAT-D payloads.
+</ParamField>
+
+<ParamField path="keyingtries" type="number" default="1">
+  Number of retransmission sequences during initial connect. `0` retries indefinitely until established or a permanent error occurs.
+</ParamField>
+
+<ParamField path="unique" type="string" default="no">
+  Connection uniqueness policy. Accepted values: `never`, `no`, `keep`, `replace`.
+</ParamField>
+
+<ParamField path="if_id_in" type="string" default="0">
+  Default inbound XFRM interface ID inherited by child SAs. `%unique` allocates a unique ID per IKE SA.
+</ParamField>
+
+<ParamField path="if_id_out" type="string" default="0">
+  Default outbound XFRM interface ID inherited by child SAs.
+</ParamField>
+
+---
+
+### connections.\<conn\>.local / .remote — authentication rounds
+
+Each connection can have one or more `local` and `remote` subsections. Suffix them (e.g. `local-eap`, `remote1`) for multiple authentication rounds.
+
+<ParamField path="auth" type="string" default="pubkey">
+  Authentication method. Accepted values:
+  - `pubkey` — certificate-based public key authentication
+  - `psk` — pre-shared key
+  - `eap` / `eap-<method>` — EAP (IKEv2 only)
+  - `xauth` / `xauth-<backend>` — XAuth (IKEv1 only)
+</ParamField>
+
+<ParamField path="id" type="string">
+  IKE identity for this authentication round. When using certificate authentication, this must appear in the certificate's subject or SAN. For `remote`, supports wildcards (e.g. `*@strongswan.org`) and regex.
+</ParamField>
+
+<ParamField path="certs" type="string">
+  Comma-separated list of certificate files to use (local) or accept (remote). Relative paths are resolved from the swanctl `x509` directory.
+</ParamField>
+
+<ParamField path="cacerts" type="string">
+  Comma-separated list of CA certificate files to accept for authentication. Relative paths are resolved from the swanctl `x509ca` directory. (remote only)
+</ParamField>
+
+<ParamField path="eap_id" type="string">
+  EAP identity. On the client side, this is the identity sent in the EAP-Identity exchange.
+</ParamField>
+
+<ParamField path="xauth_id" type="string">
+  XAuth username used in the XAuth exchange. (local / client side only)
+</ParamField>
+
+<ParamField path="groups" type="string">
+  Comma-separated authorization group memberships required from the remote peer. (remote only)
+</ParamField>
+
+<ParamField path="revocation" type="string" default="relaxed">
+  Certificate revocation policy. Accepted values:
+  - `relaxed` — fail only if the certificate is explicitly revoked (default)
+  - `ifuri` — fail if a CRL/OCSP URI is present but checking fails
+  - `strict` — fail if no revocation information is available
+</ParamField>
+
+---
+
+### connections.\<conn\>.children.\<child\> — CHILD SA settings
+
+<ParamField path="local_ts" type="string" default="dynamic">
+  Local traffic selectors, comma-separated CIDR subnets. `dynamic` resolves to the tunnel outer address or negotiated virtual IP.
+</ParamField>
+
+<ParamField path="remote_ts" type="string" default="dynamic">
+  Remote traffic selectors, comma-separated CIDR subnets.
+</ParamField>
+
+<ParamField path="esp_proposals" type="string" default="default">
+  ESP proposals for the CHILD SA, comma-separated. `default` uses a safe set of algorithms.
+</ParamField>
+
+<ParamField path="ah_proposals" type="string">
+  AH proposals for the CHILD SA. ESP is used by default when neither is specified.
+</ParamField>
+
+<ParamField path="mode" type="string" default="tunnel">
+  IPsec mode. Accepted values:
+  - `tunnel` — IPsec Tunnel Mode (default)
+  - `transport` — IPsec Transport Mode
+  - `beet` — Bound End-to-End Tunnel mode
+  - `iptfs` — IP-TFS tunnel mode
+  - `pass` — bypass traffic from IPsec processing
+  - `drop` — drop matched traffic
+</ParamField>
+
+<ParamField path="start_action" type="string" default="none">
+  Action after loading the configuration.
+  - `none` — load only; initiate manually or act as responder
+  - `trap` — install a trap policy, triggering the tunnel on matching traffic
+  - `start` — initiate the connection immediately
+  - `trap|start` — combine both
+</ParamField>
+
+<ParamField path="close_action" type="string" default="none">
+  Action when the CHILD SA is closed by the peer. `none`, `trap`, or `start`.
+</ParamField>
+
+<ParamField path="dpd_action" type="string" default="clear">
+  Action on DPD timeout. Accepted values: `clear` (close and take no action), `trap` (install trap policy), `restart` (immediately re-negotiate).
+</ParamField>
+
+<ParamField path="rekey_time" type="string" default="1h">
+  Time to schedule CHILD SA rekeying.
+</ParamField>
+
+<ParamField path="life_time" type="string" default="rekey_time + 10%">
+  Maximum CHILD SA lifetime before closure.
+</ParamField>
+
+<ParamField path="rekey_bytes" type="number" default="0">
+  Bytes processed before initiating CHILD SA rekeying. `0` disables volume-based rekeying.
+</ParamField>
+
+<ParamField path="rekey_packets" type="number" default="0">
+  Packets processed before initiating CHILD SA rekeying. `0` disables packet-count-based rekeying.
+</ParamField>
+
+<ParamField path="inactivity" type="string" default="0s">
+  Close the CHILD SA after this period of inactivity in either direction. `0` disables inactivity checks.
+</ParamField>
+
+<ParamField path="updown" type="string">
+  Path to a script invoked on CHILD SA up/down events.
+</ParamField>
+
+<ParamField path="ipcomp" type="boolean" default="no">
+  Enable IPComp compression before ESP encryption.
+</ParamField>
+
+<ParamField path="replay_window" type="number" default="32">
+  IPsec replay window size. `0` disables replay protection.
+</ParamField>
+
+---
+
+## pools
+
+Defines named IP address pools for virtual IP allocation.
+
+```
+pools {
+  <name> {
+    addrs = 10.10.0.0/24
+    dns = 10.10.0.1
+  }
+}
+```
+
+<ParamField path="addrs" type="string" required>
+  CIDR subnet or address range (`<from>-<to>`) to allocate from. Pools must be unique and non-overlapping.
+</ParamField>
+
+<ParamField path="dns" type="string">
+  Comma-separated DNS server addresses pushed to clients.
+</ParamField>
+
+<ParamField path="nbns" type="string">
+  Comma-separated NBNS/WINS server addresses pushed to clients.
+</ParamField>
+
+<ParamField path="dhcp" type="string">
+  DHCP server address for dynamic attribute assignment.
+</ParamField>
+
+<ParamField path="split_include" type="string">
+  Comma-separated subnets pushed as split-include routes.
+</ParamField>
+
+<ParamField path="split_exclude" type="string">
+  Comma-separated subnets pushed as split-exclude routes.
+</ParamField>
+
+---
+
+## secrets
+
+Defines secrets for IKE PSK, EAP/XAuth, and private key decryption.
+
+<Warning>
+  Avoid storing private key decryption passphrases in `swanctl.conf`. Store private keys unencrypted or enter passphrases interactively with `swanctl --load-creds`.
+</Warning>
+
+### IKE pre-shared keys
+
+```
+secrets {
+  ike-peer1 {
+    id = moon.strongswan.org
+    secret = "s3cr3t"
+  }
+}
+```
+
+<ParamField path="secrets.ike-<name>.secret" type="string" required>
+  Value of the IKE PSK. ASCII string, `0x`-prefixed hex, or `0s`-prefixed Base64.
+</ParamField>
+
+<ParamField path="secrets.ike-<name>.id" type="string">
+  IKE identity the PSK belongs to. Multiple `id` entries are allowed.
+</ParamField>
+
+### EAP / XAuth secrets
+
+```
+secrets {
+  eap-carol {
+    id = carol
+    secret = "password"
+  }
+}
+```
+
+<ParamField path="secrets.eap-<name>.secret" type="string" required>
+  EAP or XAuth password. `xauth` is an alias for `eap`; both are interchangeable.
+</ParamField>
+
+<ParamField path="secrets.eap-<name>.id" type="string">
+  EAP/XAuth identity the secret belongs to. Multiple `id` entries are allowed.
+</ParamField>
+
+### Private key passphrases
+
+```
+secrets {
+  private-moon {
+    file = moonKey.pem
+    secret = "passphrase"
+  }
+}
+```
+
+<ParamField path="secrets.private-<name>.file" type="string">
+  Filename in the swanctl `private` directory for which this passphrase applies.
+</ParamField>
+
+<ParamField path="secrets.private-<name>.secret" type="string">
+  Decryption passphrase for the private key.
+</ParamField>
+
+### Token (HSM/smartcard) keys
+
+<ParamField path="secrets.token-<name>.handle" type="string" required>
+  Hex-encoded CKA_ID of the private key on the token.
+</ParamField>
+
+<ParamField path="secrets.token-<name>.slot" type="number">
+  Optional token slot number.
+</ParamField>
+
+<ParamField path="secrets.token-<name>.module" type="string">
+  Optional PKCS#11 module name.
+</ParamField>
+
+<ParamField path="secrets.token-<name>.pin" type="string">
+  Optional PIN to access the key. If omitted, the PIN is prompted interactively during `swanctl --load-creds`.
+</ParamField>
+
+---
+
+## authorities
+
+Defines certification authority attributes for revocation checking and certificate URI base.
+
+```
+authorities {
+  strongswan {
+    cacert = strongswanCert.pem
+    crl_uris = http://crl.strongswan.org/strongswan.crl
+    ocsp_uris = http://ocsp.strongswan.org
+  }
+}
+```
+
+<ParamField path="cacert" type="string">
+  CA certificate filename, relative to the swanctl `x509ca` directory, or an absolute path.
+</ParamField>
+
+<ParamField path="file" type="string">
+  Absolute path to the CA certificate. Use instead of `cacert` for paths outside the swanctl directory.
+</ParamField>
+
+<ParamField path="handle" type="string">
+  Hex-encoded CKA_ID of the CA certificate on a token.
+</ParamField>
+
+<ParamField path="crl_uris" type="string">
+  Comma-separated CRL distribution point URIs (LDAP, HTTP, or file).
+</ParamField>
+
+<ParamField path="ocsp_uris" type="string">
+  Comma-separated OCSP responder URIs.
+</ParamField>
+
+<ParamField path="cert_uri_base" type="string">
+  Base URI for Hash-and-URL certificate exchange (IKEv2). Certificates are retrieved by appending their SHA-1 hash to this URI.
+</ParamField>
+
+---
+
+## Full example
+
+```
+connections {
+  gw-gw {
+    remote_addrs = moon.strongswan.org
+    version = 2
+    proposals = aes256gcm16-prfsha384-ecp384
+    rekey_time = 4h
+
+    local {
+      auth = pubkey
+      certs = sunCert.pem
+      id = sun.strongswan.org
+    }
+    remote {
+      auth = pubkey
+      id = moon.strongswan.org
+    }
+    children {
+      gw-gw {
+        local_ts = 10.1.0.0/16
+        remote_ts = 10.2.0.0/16
+        esp_proposals = aes256gcm16-ecp384
+        start_action = start
+      }
+    }
+  }
+}
+
+secrets {
+}
+
+authorities {
+  strongswan {
+    cacert = strongswanCert.pem
+    crl_uris = http://crl.strongswan.org/strongswan.crl
+  }
+}
+```

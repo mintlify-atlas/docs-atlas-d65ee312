@@ -1,0 +1,135 @@
+---
+title: "NAT Traversal"
+description: Configure IPsec VPN through NAT devices using NAT-T (UDP encapsulation)
+keywords: ["nat", "nat-t", "nat traversal", "udp encapsulation", "rfc 3947", "rfc 3948", "udp 4500", "esp", "ipsec", "keepalive"]
+---
+
+Network Address Translation (NAT) is ubiquitous in home networks, enterprise edge devices, and carrier-grade NAT (CGNAT). IPsec was designed before NAT became widespread, and the two interact poorly without a compatibility layer. NAT Traversal (NAT-T) solves this by encapsulating IKE and ESP packets in UDP.
+
+## How NAT breaks IPsec
+
+Raw IPsec uses two protocols:
+
+- **IKE** — UDP on port 500, used for key exchange (not broken by NAT on its own, but many NAT devices mishandle it)
+- **ESP** (protocol 50) — a raw IP protocol with no port numbers; NAT devices cannot track connections or rewrite addresses without port information
+
+Specifically:
+
+- **AH** (Authentication Header, protocol 51) is permanently broken by NAT because it authenticates the IP header, which NAT modifies. Do not use AH through NAT.
+- **ESP** through NAT fails when multiple hosts behind the same NAT device establish tunnels to the same remote gateway: the NAT device cannot distinguish the return ESP traffic by SPI because it has no port to map.
+
+## NAT-T standard (RFC 3947 / RFC 3948)
+
+NAT-T defines two mechanisms:
+
+1. **NAT detection** (RFC 3947) — both peers include hashes of their IP addresses and ports in IKEv2 `NOTIFY` payloads. If either peer detects a difference between the expected and received values, NAT is present.
+2. **UDP encapsulation** (RFC 3948) — ESP packets are wrapped in UDP datagrams with a non-ESP marker, allowing NAT devices to track them like ordinary UDP flows.
+
+## How strongSwan detects NAT
+
+During the IKEv2 `IKE_SA_INIT` exchange, both peers exchange `NAT_DETECTION_SOURCE_IP` and `NAT_DETECTION_DESTINATION_IP` notify payloads. Each payload contains a SHA-1 hash of the SPIi, SPIr, IP address, and port. If the received hash does not match what the recipient would compute from the observed source address and port, a NAT device has rewritten the packet — and NAT-T activates automatically.
+
+## UDP port behavior
+
+| Scenario | IKE port | ESP transport |
+|---|---|---|
+| No NAT detected | UDP 500 | Raw ESP (protocol 50) |
+| NAT detected | Float to UDP 4500 | ESP-in-UDP on port 4500 |
+
+When NAT is detected, both IKE and ESP traffic move to UDP port 4500 for the remainder of the session. The ESP payload is prefixed with a four-byte non-ESP marker (`0x00000000`) so the receiver can distinguish ESP-in-UDP from IKE-in-UDP on the same port.
+
+## Configuration
+
+NAT-T is **automatic** in strongSwan — no configuration is required to enable it. The charon daemon always includes NAT detection payloads and responds correctly when NAT is detected.
+
+To force UDP encapsulation regardless of whether NAT is detected (useful for testing or for firewalls that block ESP):
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+  gw-gw {
+    # ... IKE and auth config ...
+    children {
+      tunnel {
+        local_ts  = 10.0.0.0/24
+        remote_ts = 10.1.0.0/24
+        encap = yes   # force UDP encapsulation even without NAT
+      }
+    }
+  }
+}
+```
+
+<Note>
+  `encap = yes` is a CHILD_SA option, not an IKE connection option. It forces ESP-in-UDP encapsulation for that specific CHILD_SA.
+</Note>
+
+## Firewall rules
+
+For a gateway behind a firewall, open the following:
+
+```bash
+# IKE negotiation
+iptables -A INPUT -p udp --dport 500 -j ACCEPT
+
+# NAT-T (IKE floated + ESP encapsulated)
+iptables -A INPUT -p udp --dport 4500 -j ACCEPT
+
+# Raw ESP (only needed when no NAT is present between peers)
+iptables -A INPUT -p esp -j ACCEPT
+```
+
+<Warning>
+  If you block protocol 50 (ESP) entirely but expect some peers to connect without NAT (raw ESP), those connections will fail. Either allow protocol 50, or use `encap = yes` to force UDP encapsulation for all peers.
+</Warning>
+
+## NAT keepalives
+
+NAT devices expire UDP mappings after a period of inactivity (typically 30–300 seconds). If an IPsec SA is idle, the NAT mapping may be removed, breaking the return path for ESP traffic.
+
+strongSwan sends periodic UDP keepalive packets (a single `0xff` byte) to maintain the NAT mapping. Configure the interval in `strongswan.conf`:
+
+```text
+# /etc/strongswan.conf
+
+charon {
+    # Send a NAT-T keepalive every 20 seconds (default: 20)
+    keep_alive = 20
+}
+```
+
+Set `keep_alive` lower than the NAT device's UDP timeout. Many home routers time out UDP mappings in 30 seconds, so the default of 20 seconds is a safe margin.
+
+## Verifying NAT-T status
+
+After a connection is established, check the SA details to confirm whether NAT-T is active:
+
+```bash
+swanctl --list-sas
+```
+
+Look for `nat-local` and `nat-remote` flags in the output:
+
+```text
+gw-gw: #1, ESTABLISHED, IKEv2, ...
+  local  '192.168.1.10' @ 192.168.1.10[4500] [NAT]
+  remote 'vpn.example.com' @ 203.0.113.1[4500]
+  nat-local: yes, nat-remote: no
+```
+
+- `nat-local: yes` — a NAT device exists on the local side (your side)
+- `nat-remote: yes` — a NAT device exists on the remote side
+
+When NAT-T is active, the port shown is `4500` rather than `500`.
+
+## Double NAT (CGNAT)
+
+Carrier-grade NAT (CGNAT) adds a second layer of NAT between the ISP and the public internet. strongSwan handles double NAT the same way as single NAT — the NAT detection mechanism detects any NAT in the path, not just the first hop.
+
+Considerations for CGNAT deployments:
+
+- The client's RFC 1918 address is further translated by the ISP before reaching the gateway; IKE/ESP identities still use the client's local address
+- NAT keepalives are especially important: CGNAT mappings often have shorter timeouts than home routers
+- Some CGNAT implementations do not correctly handle IKE on UDP 500; if connections fail, try `encap = yes` on the server to force UDP 4500 from the start
+- Port forwarding is not available through CGNAT — the gateway must be publicly reachable without NAT

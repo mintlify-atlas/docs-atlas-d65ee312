@@ -1,0 +1,111 @@
+---
+title: "Plugin Architecture"
+description: "strongSwan's modular plugin system for cryptography, kernel integration, and protocol extensions"
+---
+
+Almost all functionality in charon is implemented as plugins. The daemon itself provides only the core IKE state machine and plugin infrastructure — cryptography, kernel integration, EAP methods, certificate handling, and network utilities are each provided by dedicated plugin modules.
+
+This design lets you enable only what you need, swap implementations (for example, choosing between OpenSSL and wolfSSL for crypto), and extend strongSwan without modifying the daemon itself.
+
+## Loading plugins
+
+There are two ways to control which plugins charon loads at startup.
+
+### Explicit load list
+
+Set a space-separated list in `strongswan.conf`:
+
+```conf strongswan.conf
+charon {
+  load = random nonce aes sha1 sha2 hmac pem pkcs1 x509 revocation \
+         constraints pubkey kernel-netlink socket-default updown vici
+}
+```
+
+<Warning>
+If you specify an explicit `load` list, only the listed plugins are loaded. Omitting a required plugin (for example, `nonce` or `random`) will prevent charon from starting correctly.
+</Warning>
+
+### Modular loading
+
+Set `load_modular = yes` and control each plugin via its own `.conf` file in `/etc/strongswan.d/charon/`:
+
+```conf strongswan.conf
+charon {
+  load_modular = yes
+}
+```
+
+Each plugin conf file in `/etc/strongswan.d/charon/` has a `load` key:
+
+```conf /etc/strongswan.d/charon/openssl.conf
+plugins {
+  openssl {
+    load = yes
+  }
+}
+```
+
+<Tip>
+`load_modular = yes` is the recommended approach for distribution packages. It lets you enable or disable individual plugins without editing a monolithic list.
+</Tip>
+
+## Plugin categories
+
+<CardGroup cols={2}>
+  <Card title="Kernel backends" icon="microchip">
+    Install IPsec SAs and routing policies into the OS: `kernel-netlink`, `kernel-pfkey`, `kernel-pfroute`, `kernel-libipsec`, `kernel-iph`, `kernel-wfp`
+  </Card>
+  <Card title="Cryptography" icon="lock">
+    Algorithm implementations for IKE and ESP: `openssl`, `botan`, `wolfssl`, `gcrypt`, `gmp`, `aesni`, `af-alg`, and dedicated algorithm plugins
+  </Card>
+  <Card title="EAP methods" icon="id-card">
+    Password and certificate-based client authentication: `eap-md5`, `eap-mschapv2`, `eap-tls`, `eap-ttls`, `eap-peap`, `eap-radius`, `eap-sim`, `eap-aka`
+  </Card>
+  <Card title="Certificate handling" icon="certificate">
+    X.509 parsing, revocation, PKCS#11/12, constraints: `x509`, `revocation`, `constraints`, `pkcs11`, `pkcs12`, `pem`
+  </Card>
+  <Card title="Network utilities" icon="network-wired">
+    DNS resolution, virtual IPs via DHCP, script hooks: `resolve`, `dhcp`, `updown`, `attr`
+  </Card>
+  <Card title="Monitoring" icon="chart-line">
+    Traffic counters, IP lookups, error signalling: `counters`, `lookip`, `error-notify`
+  </Card>
+  <Card title="Database" icon="database">
+    SQLite/MySQL for IP pools and certificate storage: `sql`, `attr-sql`
+  </Card>
+  <Card title="Post-quantum" icon="atom">
+    ML-KEM (CRYSTALS-Kyber) hybrid key exchange for IKEv2: `ml`, `curve25519`
+  </Card>
+</CardGroup>
+
+## Listing loaded algorithms
+
+After charon is running, use `swanctl` to inspect which algorithms are actually available from loaded crypto plugins:
+
+```bash
+swanctl --list-algs
+```
+
+The output groups algorithms by type (encryption, integrity, PRF, DH groups, signatures, random). If an algorithm you expect is missing, the plugin providing it is either not loaded or failed to initialize.
+
+## Plugin directories
+
+Plugin shared objects are installed under the strongSwan library path, typically:
+
+```
+/usr/lib/ipsec/plugins/     # Debian/Ubuntu packages
+/usr/lib64/strongswan/      # RPM-based distributions
+/usr/local/lib/ipsec/plugins/  # Source installs
+```
+
+The daemon logs plugin loading at startup. Check the journal or `/var/log/syslog` for lines like:
+
+```
+loading plugins: charon random nonce aes sha2 ...
+plugin 'openssl': loaded successfully
+```
+
+<Note>
+Plugins listed but not found on disk are silently skipped unless `charon.plugins.<name>.load = yes` is set via modular loading, in which case a missing plugin causes a warning.
+</Note>

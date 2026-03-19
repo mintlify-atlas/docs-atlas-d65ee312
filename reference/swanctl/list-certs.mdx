@@ -1,0 +1,165 @@
+---
+title: "swanctl --list-certs"
+description: List X.509 certificates, attribute certificates, CRLs, OCSP responses, and raw public keys currently loaded in the charon daemon.
+sidebarTitle: "--list-certs"
+---
+
+The `--list-certs` command queries `charon` for all credentials loaded into
+its certificate store and prints their details. It covers end-entity
+certificates, CA certificates, certificate revocation lists (CRLs), OCSP
+responses, and trusted raw public keys.
+
+## Synopsis
+
+```bash
+swanctl --list-certs [--type <type>] [--flag <flag>] [--subject <dn/san>]
+                     [--pem] [--short] [--utc] [--raw|--pretty]
+```
+
+## Options
+
+<ParamField path="--type" type="string">
+  Filter by credential type. Accepted values:
+
+  | Value | Description |
+  |-------|-------------|
+  | `x509` | X.509 end-entity and CA certificates (default if omitted) |
+  | `x509_ac` | X.509 attribute certificates |
+  | `x509_crl` | Certificate revocation lists |
+  | `ocsp_response` | Cached OCSP responses |
+  | `pubkey` | Trusted raw public keys (without a wrapping certificate) |
+
+</ParamField>
+
+<ParamField path="--flag" type="string">
+  Filter X.509 certificates by their usage flag. Only meaningful with
+  `--type x509`. Accepted values:
+
+  | Value | Description |
+  |-------|-------------|
+  | `none` | End-entity certificates (no special flag) |
+  | `ca` | CA certificates (`CA:TRUE` in Basic Constraints) |
+  | `aa` | Attribute authority certificates |
+  | `ocsp` | OCSP signing certificates |
+  | `any` | Match all flags |
+
+</ParamField>
+
+<ParamField path="--subject" type="string">
+  Filter certificates whose Subject Distinguished Name or Subject Alternative
+  Name contains the given string. Accepts a full DN, a partial DN component
+  (e.g., `CN=moon`), or an IP/DNS SAN.
+</ParamField>
+
+<ParamField path="--pem" type="boolean">
+  Print the PEM encoding of each matching certificate instead of the human-
+  readable summary. Useful for extracting certificates from the daemon store.
+</ParamField>
+
+<ParamField path="--short" type="boolean">
+  Omit extended certificate details (Subject Alternative Names, Key Usage
+  extensions, etc.) and print a condensed one-block summary per certificate.
+</ParamField>
+
+<ParamField path="--utc" type="boolean">
+  Display validity timestamps in UTC instead of local time.
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Dump the raw VICI event messages for each certificate.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Dump raw VICI event messages with pretty-print indentation. Implies `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI. Overrides the default `unix:///var/run/charon.vici`.
+</ParamField>
+
+## Example output
+
+### List all loaded certificates
+
+```bash
+swanctl --list-certs
+```
+
+```
+List of X.509 End Entity Certificates
+
+  subject:  "C=CH, O=strongSwan, CN=moon.strongswan.org"
+  issuer:   "C=CH, O=strongSwan, CN=strongSwan CA"
+  validity:  not before Jan 01 00:00:00 2024, ok
+             not after  Dec 31 23:59:59 2026, ok (expires in 1000 days)
+  serial:    01
+  flags:     
+  subjkeyId: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+  pubkey:    RSA 3072 bits, has private key
+  keyid:     aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+  subjkey:   aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+
+List of X.509 CA Certificates
+
+  subject:  "C=CH, O=strongSwan, CN=strongSwan CA"
+  issuer:   "C=CH, O=strongSwan, CN=strongSwan CA"
+  validity:  not before Jan 01 00:00:00 2020, ok
+             not after  Dec 31 23:59:59 2030, ok (expires in 2500 days)
+  serial:    00
+  flags:     CA CRLSign self-signed
+  subjkeyId: 11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44
+  pubkey:    RSA 4096 bits
+  keyid:     11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44
+  subjkey:   11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44
+```
+
+## Output field reference
+
+| Field | Description |
+|-------|-------------|
+| `subject` | Subject Distinguished Name of the certificate |
+| `issuer` | Issuer Distinguished Name. Identical to `subject` for self-signed CA certificates |
+| `validity` | `not before` and `not after` timestamps with remaining validity in days |
+| `serial` | Certificate serial number (hex) |
+| `flags` | X.509 extension flags: `CA`, `CRLSign`, `self-signed`, `serverAuth`, `clientAuth`, etc. |
+| `subjkeyId` | Subject Key Identifier extension value (hex) |
+| `pubkey` | Algorithm and key size. Shows `has private key` when the corresponding private key is also loaded |
+| `keyid` | SHA-1 hash of the public key (used for key matching in strongSwan) |
+| `subjkey` | SHA-1 hash of the SubjectPublicKeyInfo DER encoding |
+
+## Filtering examples
+
+### Show only CA certificates
+
+```bash
+swanctl --list-certs --type x509 --flag ca
+```
+
+### Find a certificate by subject
+
+```bash
+swanctl --list-certs --subject "CN=moon"
+```
+
+### List loaded CRLs
+
+```bash
+swanctl --list-certs --type x509_crl
+```
+
+### Export a certificate in PEM format
+
+```bash
+swanctl --list-certs --subject "CN=moon.strongswan.org" --pem > moon.pem
+```
+
+### Compact listing of all certificates
+
+```bash
+swanctl --list-certs --short
+```
+
+## See also
+
+- [`swanctl --load-all`](/reference/swanctl/load-all) — reload credentials into the daemon
+- [`swanctl --list-sas`](/reference/swanctl/list-sas) — show active Security Associations

@@ -1,0 +1,146 @@
+---
+title: "pki --signcrl"
+description: Create or update a Certificate Revocation List (CRL).
+sidebarTitle: "--signcrl"
+---
+
+`pki --signcrl` creates or updates a Certificate Revocation List (CRL) signed by a CA. Use it to revoke certificates and publish revocation status.
+
+## Synopsis
+
+```bash
+pki --signcrl --cacert <file> --cakey <file> [options]
+```
+
+## Options
+
+### CA inputs
+
+<ParamField path="--cacert" type="string" required>
+  Path to the CA certificate file (PEM or DER).
+</ParamField>
+
+<ParamField path="--cakey" type="string" required>
+  Path to the CA private key file (PEM or DER).
+</ParamField>
+
+<ParamField path="--cakeyid" type="string">
+  Hex-encoded CKA_ID of the CA private key on a token.
+</ParamField>
+
+### CRL properties
+
+<ParamField path="--lifetime" type="number" default="15">
+  CRL validity period in days. Clients should not cache a CRL beyond this date.
+</ParamField>
+
+<ParamField path="--lastcrl" type="string">
+  Path to a previous CRL to update. Revocations in the existing CRL are carried over into the new CRL.
+</ParamField>
+
+<ParamField path="--basecrl" type="string">
+  Base CRL when issuing a delta CRL.
+</ParamField>
+
+<ParamField path="--digest" type="string">
+  Digest algorithm for the CRL signature (e.g. `sha256`, `sha384`, `sha512`).
+</ParamField>
+
+<ParamField path="--rsa-padding" type="string">
+  RSA padding scheme. Use `pss` for RSASSA-PSS.
+</ParamField>
+
+### Revoking certificates
+
+Each revocation entry requires either `--cert` or `--serial`, and optionally `--reason` and `--date`.
+
+<ParamField path="--cert" type="string">
+  Path to a certificate to revoke. The serial number is extracted from the certificate automatically.
+</ParamField>
+
+<ParamField path="--serial" type="string">
+  Hex-encoded serial number of the certificate to revoke.
+</ParamField>
+
+<ParamField path="--reason" type="string">
+  Reason for revocation. Accepted values:
+  - `key-compromise`
+  - `ca-compromise`
+  - `affiliation-changed`
+  - `superseded`
+  - `cessation-of-operation`
+  - `certificate-hold`
+</ParamField>
+
+<ParamField path="--date" type="string">
+  Date of revocation as a Unix timestamp. Defaults to the current time.
+</ParamField>
+
+### Output
+
+<ParamField path="--outform" type="string" default="der">
+  Output encoding format. Accepted values: `pem`, `der`.
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write the CRL to the specified file. If omitted, output goes to stdout.
+</ParamField>
+
+## Examples
+
+Create an empty CRL valid for 30 days:
+
+```bash
+pki --signcrl \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --lifetime 30 \
+  --outform pem > strongswan.crl
+```
+
+Revoke a certificate and update an existing CRL:
+
+```bash
+pki --signcrl \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --lifetime 30 \
+  --lastcrl strongswan.crl \
+  --reason key-compromise \
+  --cert moonCert.pem \
+  --outform pem > new.crl
+```
+
+Revoke by serial number with a specific revocation date:
+
+```bash
+pki --signcrl \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --lifetime 30 \
+  --lastcrl strongswan.crl \
+  --serial 0x01 \
+  --reason superseded \
+  --date 1700000000 \
+  --outform pem > new.crl
+```
+
+Revoke multiple certificates in a single CRL:
+
+```bash
+pki --signcrl \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --lifetime 30 \
+  --reason key-compromise --cert moonCert.pem \
+  --reason cessation-of-operation --cert carolCert.pem \
+  --outform pem > new.crl
+```
+
+<Warning>
+  Always use `--lastcrl` when updating an existing CRL. Omitting it creates a new CRL with only the revocations specified in the current invocation; previously revoked certificates will no longer appear as revoked.
+</Warning>
+
+<Tip>
+  To embed the CRL distribution point URI in issued certificates, use `pki --issue --crl <uri>`. Clients will fetch the CRL from the specified URI to check revocation status.
+</Tip>

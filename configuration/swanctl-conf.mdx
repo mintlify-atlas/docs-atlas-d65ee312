@@ -1,0 +1,216 @@
+---
+title: "swanctl.conf"
+description: "Configure VPN connections, authentication, and credentials in swanctl.conf"
+---
+
+`swanctl.conf` is the primary configuration file for strongSwan's `swanctl` frontend. It defines IKE connections, virtual IP pools, authentication secrets, and certificate authority settings.
+
+**File location:** `/etc/swanctl/swanctl.conf`
+
+<Tip>
+  Additional configuration files can be included using `include conf.d/*.conf` at the end of `swanctl.conf`, keeping large configurations modular.
+</Tip>
+
+## Top-level sections
+
+| Section | Purpose |
+|---|---|
+| `connections` | IKE connection definitions |
+| `pools` | Virtual IP address pools |
+| `secrets` | PSKs, EAP passwords, and private key passphrases |
+| `authorities` | Certificate authority settings |
+
+---
+
+## connections
+
+The `connections` section contains one subsection per IKE connection. Each subsection name becomes the connection's identifier.
+
+### IKE parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `version` | `0` | IKE version: `1` for IKEv1, `2` for IKEv2, `0` accepts both and initiates with IKEv2 |
+| `local_addrs` | `%any` | Local address(es) for IKE communication (IP, DNS name, CIDR, or range) |
+| `remote_addrs` | `%any` | Remote address(es) for IKE communication. At least one specific address is required to initiate |
+| `local_port` | `500` | Local UDP port. Port 500 enables automatic float to 4500 for NAT traversal |
+| `remote_port` | `500` | Remote UDP port. Port 500 enables automatic float to 4500 for NAT traversal |
+| `proposals` | `default` | Comma-separated IKE algorithm proposals. `default` selects safe, interoperable algorithms |
+| `vips` | | Virtual IPs to request via configuration payload. `0.0.0.0` or `::` requests any address |
+| `pools` | | Comma-separated list of named pools to assign virtual IPs from |
+| `rekey_time` | `4h` | Schedule IKE rekeying. Refreshes key material without rechecking credentials |
+| `reauth_time` | `0s` | Schedule full IKE reauthentication. Disabled by default |
+| `dpd_delay` | `0s` | Interval for liveness (DPD) checks using IKEv2 INFORMATIONAL or IKEv1 R_U_THERE |
+| `mobike` | `yes` | Enable MOBIKE on IKEv2 connections for client mobility and multi-homing |
+| `fragmentation` | `yes` | IKE fragmentation: `yes`, `accept`, `force` (IKEv1 only), or `no` |
+| `unique` | `no` | Uniqueness policy: `no`, `never`, `keep`, or `replace` |
+| `send_cert` | `ifasked` | When to send certificate payloads: `ifasked`, `always`, or `never` |
+
+### local and remote auth sections
+
+Each connection has one or more `local` and `remote` subsections defining authentication rounds. Use a suffix (e.g. `local-1`, `local-2`) for multiple rounds.
+
+<Tabs>
+  <Tab title="local">
+    | Parameter | Default | Description |
+    |---|---|---|
+    | `auth` | `pubkey` | Authentication method: `pubkey`, `psk`, `eap`, `eap-md5`, `eap-mschapv2`, `xauth` |
+    | `certs` | | Comma-separated certificate files for authentication (relative to `/etc/swanctl/x509/` or absolute) |
+    | `id` | | IKE identity. Must match the certificate subject or subjectAltName when using `pubkey` |
+    | `eap_id` | | EAP identity sent during EAP-Identity exchange |
+    | `xauth_id` | | XAuth username |
+  </Tab>
+  <Tab title="remote">
+    | Parameter | Default | Description |
+    |---|---|---|
+    | `auth` | `pubkey` | Authentication to expect from the remote peer |
+    | `id` | `%any` | IKE identity to expect. Supports wildcards (e.g. `*@example.org`) |
+    | `eap_id` | | Request EAP identity from client and match it against this value |
+    | `certs` | | Certificates to accept for authentication |
+    | `cacerts` | | CA certificates to accept for building a trust chain |
+    | `revocation` | `relaxed` | Revocation policy: `strict`, `ifuri`, or `relaxed` |
+  </Tab>
+</Tabs>
+
+<Note>
+  For IKEv2 multi-round EAP (RFC 4739), define multiple `local` and `remote` sections with unique suffixes. For IKEv1 XAuth, add a second round with `auth = xauth` after the initial `pubkey` or `psk` round.
+</Note>
+
+### children subsection
+
+Each connection contains a `children` subsection with one entry per CHILD_SA (IPsec SA). The subsection name becomes the CHILD_SA identifier.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `local_ts` | `dynamic` | Local traffic selectors. `dynamic` uses the tunnel outer address or virtual IP |
+| `remote_ts` | `dynamic` | Remote traffic selectors |
+| `mode` | `tunnel` | IPsec mode: `tunnel`, `transport`, `beet`, `iptfs`, `pass`, or `drop` |
+| `start_action` | `none` | Action after loading config: `none` (manual), `trap` (on-demand), `start` (immediate), or `trap\|start` |
+| `close_action` | `none` | Action when remote closes CHILD_SA: `none`, `trap`, or `start` |
+| `dpd_action` | `clear` | Action on DPD timeout: `clear`, `trap`, or `restart` |
+| `esp_proposals` | `default` | ESP algorithm proposals |
+| `rekey_time` | `1h` | Schedule CHILD_SA rekeying |
+| `life_time` | `rekey_time + 10%` | Hard CHILD_SA lifetime before closing |
+| `inactivity` | `0s` | Close CHILD_SA after this period of inactivity. `0` disables the check |
+| `updown` | | Script to invoke on CHILD_SA up/down events |
+
+---
+
+## pools
+
+The `pools` section defines named virtual IP address pools. Connections reference pools by name using the `pools` parameter.
+
+| Parameter | Description |
+|---|---|
+| `addrs` | CIDR subnet or range (`<from>-<to>`) of addresses to allocate |
+| `dns` | Comma-separated DNS server addresses to push to clients |
+| `nbns` | Comma-separated NBNS/WINS server addresses |
+
+See [Virtual IP Pools](/configuration/virtual-ip-pools) for full pool configuration details.
+
+---
+
+## secrets
+
+The `secrets` section stores credentials for IKE/EAP authentication and private key decryption.
+
+<Warning>
+  Storing private key passphrases in `swanctl.conf` provides no real security benefit over unencrypted keys. Either store keys unencrypted or enter passphrases manually when running `swanctl --load-creds`.
+</Warning>
+
+### Secret types
+
+| Prefix | Purpose |
+|---|---|
+| `ike` | IKE pre-shared key (PSK) |
+| `eap` | EAP or XAuth password |
+| `xauth` | Alias for `eap` |
+| `ntlm` | NT hash for EAP-MSCHAPv2 |
+| `private` | Passphrase for a key in the `private/` directory |
+| `rsa` | Passphrase for a key in the `rsa/` directory |
+| `ecdsa` | Passphrase for a key in the `ecdsa/` directory |
+| `pkcs8` | Passphrase for a PKCS#8 key |
+| `pkcs12` | Passphrase for a PKCS#12 bundle |
+| `ppk` | Post-quantum preshared key (PPK) |
+
+Each secret subsection contains:
+- `secret` — the secret value (plain string, `0x`-prefixed hex, or `0s`-prefixed Base64)
+- `id` (or `id-1`, `id-2`, ...) — identity the secret belongs to
+
+---
+
+## authorities
+
+The `authorities` section defines certificate authority trust anchors and associated metadata.
+
+| Parameter | Description |
+|---|---|
+| `cacert` | CA certificate file (relative to `/etc/swanctl/x509ca/` or absolute path) |
+| `crl_uris` | Comma-separated CRL distribution point URIs (LDAP, HTTP, or file) |
+| `ocsp_uris` | Comma-separated OCSP responder URIs |
+| `cert_uri_base` | Base URI for Hash-and-URL certificate exchange (IKEv2) |
+
+---
+
+## Complete example
+
+The following example configures a roadwarrior server with certificate authentication in the first round and EAP-MSCHAPv2 in the second round.
+
+```text swanctl.conf
+connections {
+    rw {
+        version       = 2
+        local_addrs   = 192.0.2.1
+        remote_addrs  = %any
+        pools         = rw-pool
+
+        local {
+            auth  = pubkey
+            certs = server-cert.pem
+            id    = server.example.org
+        }
+        remote {
+            auth   = eap-mschapv2
+            eap_id = %any
+        }
+
+        children {
+            rw {
+                local_ts     = 10.1.0.0/16
+                remote_ts    = dynamic
+                mode         = tunnel
+                start_action = none
+                esp_proposals = aes256gcm16-prfsha256-ecp256
+                rekey_time   = 30m
+            }
+        }
+    }
+}
+
+pools {
+    rw-pool {
+        addrs = 10.3.0.0/24
+        dns   = 10.1.0.1
+    }
+}
+
+secrets {
+    eap-alice {
+        id     = alice
+        secret = "correct-horse-battery-staple"
+    }
+    eap-bob {
+        id     = bob
+        secret = "hunter2"
+    }
+}
+
+authorities {
+    vpn-ca {
+        cacert   = ca-cert.pem
+        crl_uris = http://crl.example.org/vpn-ca.crl
+    }
+}
+
+include conf.d/*.conf
+```

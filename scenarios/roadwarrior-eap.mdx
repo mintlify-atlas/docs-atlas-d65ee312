@@ -1,0 +1,227 @@
+---
+title: "Roadwarrior with EAP Authentication"
+description: Authenticate roadwarrior clients using EAP password-based methods (EAP-MD5, EAP-MSCHAPv2)
+keywords: ["eap", "eap-md5", "eap-mschapv2", "roadwarrior", "password authentication", "ipsec", "swanctl"]
+---
+
+When deploying VPN access to users who cannot manage certificates — for example, employees using a native OS VPN client — EAP (Extended Authentication Protocol) lets the gateway authenticate clients with a username and password instead.
+
+## When to use EAP vs certificates
+
+| | Certificate auth | EAP password auth |
+|---|---|---|
+| Client setup complexity | Higher (requires cert distribution) | Lower (username + password only) |
+| Revocation | Per-certificate CRL/OCSP | Remove secret from gateway config |
+| OS client compatibility | Varies | Broad (EAP-MSCHAPv2 built into Windows/macOS/iOS/Android) |
+| Credential exposure | Private key never leaves client | Password stored in gateway config |
+
+<Info>
+  The gateway still authenticates itself to clients using a certificate. Only the **client-to-gateway** direction uses EAP.
+</Info>
+
+## Network topology
+
+```text
+10.1.0.0/16 -- | 192.168.0.1 | === | x.x.x.x |
+  moon-net          moon              carol
+```
+
+## Certificate files
+
+The gateway requires its own certificate and private key. EAP clients only need the CA certificate — no personal certificate is required.
+
+<Tabs>
+  <Tab title="moon (gateway)">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/moonCert.pem
+    /etc/swanctl/private/moonKey.pem
+    ```
+  </Tab>
+  <Tab title="carol (roadwarrior)">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    ```
+
+    No personal certificate or private key is needed on the client side.
+  </Tab>
+</Tabs>
+
+## Configuration
+
+### Gateway (moon)
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    rw {
+        local {
+            auth = pubkey
+            certs = moonCert.pem
+            id = moon.strongswan.org
+        }
+        remote {
+            auth = eap-md5
+        }
+        children {
+            net-net {
+                local_ts  = 10.1.0.0/16
+            }
+        }
+        send_certreq = no
+    }
+}
+
+secrets {
+    eap-carol {
+        id = carol@strongswan.org
+        secret = Ar3etTnp
+    }
+    eap-dave {
+        id = dave@strongswan.org
+        secret = W7R0g3do
+    }
+}
+```
+
+`send_certreq = no` suppresses the gateway's certificate request to the client. Without this, clients that do not have a certificate would fail during the IKE handshake before EAP even begins.
+
+The `secrets` section maps EAP identities to passwords. Each entry is matched by the `id` field against the identity the client presents during EAP.
+
+### Roadwarrior (carol)
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    home {
+        remote_addrs = moon.strongswan.org
+
+        local {
+            auth = eap
+            id = carol@strongswan.org
+        }
+        remote {
+            auth = pubkey
+            id = moon.strongswan.org
+        }
+        children {
+            home {
+                local_ts  = 10.1.0.0/16
+                start_action = start
+            }
+        }
+    }
+}
+
+secrets {
+    eap-carol {
+        id = carol@strongswan.org
+        secret = Ar3etTnp
+    }
+}
+```
+
+## EAP identity variant
+
+In some deployments, the IKEv2 identity used during key exchange differs from the EAP identity used for password authentication. A common case is where the client's IKEv2 identity is its IP address (the default when no `id` is set), while the EAP identity is a human-readable username.
+
+Use `eap_id` to decouple the two identities:
+
+### Gateway with `eap_id = %any`
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    rw {
+        local {
+            auth = pubkey
+            certs = moonCert.pem
+            id = moon.strongswan.org
+        }
+        remote {
+            auth = eap-md5
+            eap_id = %any
+        }
+        children {
+            net-net {
+                local_ts  = 10.1.0.0/16
+            }
+        }
+        send_certreq = no
+    }
+}
+
+secrets {
+    eap-carol {
+        id = carol
+        secret = Ar3etTnp
+    }
+    eap-dave {
+        id = dave
+        secret = W7R0g3do
+    }
+}
+```
+
+`eap_id = %any` tells the gateway to look up EAP credentials by the EAP identity exchanged during EAP, rather than the outer IKEv2 identity. Secrets are keyed by short usernames (`carol`, `dave`) rather than email addresses.
+
+### Roadwarrior with `eap_id`
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    home {
+        remote_addrs = moon.strongswan.org
+
+        local {
+            auth = eap
+            eap_id = carol
+        }
+        remote {
+            auth = pubkey
+            id = moon.strongswan.org
+        }
+        children {
+            home {
+                local_ts  = 10.1.0.0/16
+                start_action = start
+            }
+        }
+    }
+}
+
+secrets {
+    eap-carol {
+        id = carol
+        secret = Ar3etTnp
+    }
+}
+```
+
+Here `eap_id = carol` sets only the EAP identity. The IKEv2 identity defaults to the client's source IP address, which the gateway accepts because `eap_id = %any` ignores it.
+
+## EAP-MSCHAPv2 variant
+
+To use EAP-MSCHAPv2 instead of EAP-MD5, change the `auth` value on the gateway's `remote` block:
+
+```text
+remote {
+    auth = eap-mschapv2
+}
+```
+
+No other changes are required. The `secrets` section format and the client configuration remain the same. EAP-MSCHAPv2 is widely supported by Windows, macOS, iOS, and Android native VPN clients.
+
+<Warning>
+  EAP secrets are stored in plaintext in `swanctl.conf`. Restrict file permissions to prevent unauthorized access:
+
+  ```bash
+  chmod 600 /etc/swanctl/swanctl.conf
+  ```
+
+  For production deployments, consider storing secrets in a separate file with tight permissions or using an external authentication backend such as RADIUS.
+</Warning>

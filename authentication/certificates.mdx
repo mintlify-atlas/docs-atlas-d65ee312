@@ -1,0 +1,258 @@
+---
+title: "Certificate Authentication"
+description: "Authenticate VPN peers using X.509 certificates and public key infrastructure"
+---
+
+Certificate-based authentication (also called public key authentication) is the recommended method for IKEv2 connections. Each peer presents a signed X.509 certificate during the IKE_AUTH exchange, and the other side validates it against a trusted Certificate Authority (CA).
+
+## How It Works
+
+During IKEv2 authentication, each peer generates a signature over an exchange-specific octet string using its private key and sends it in the `AUTH` payload. The counterpart verifies the signature against the public key in the presented certificate. strongSwan supports both traditional PKCS#1 v1.5 RSA signatures and the stronger RSASSA-PSS scheme (RFC 8017), as well as ECDSA signatures.
+
+If both peers support **RFC 7427** (Signature Authentication in IKEv2), strongSwan negotiates the hash algorithm used for the signature. You can constrain which algorithms are acceptable with the `auth` keyword.
+
+## Basic Configuration
+
+<Tabs>
+  <Tab title="Gateway (Responder)">
+    ```ini
+    # /etc/swanctl/swanctl.conf
+    connections {
+      vpn-server {
+        local_addrs  = 203.0.113.1
+        remote_addrs = %any
+
+        local {
+          auth  = pubkey
+          certs = moonCert.pem
+          id    = "C=CH, O=strongSwan, CN=moon.strongswan.org"
+        }
+
+        remote {
+          auth    = pubkey
+          cacerts = strongswanCa.pem
+        }
+
+        children {
+          net {
+            local_ts  = 10.1.0.0/16
+            remote_ts = dynamic
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Client (Initiator)">
+    ```ini
+    # /etc/swanctl/swanctl.conf
+    connections {
+      vpn-client {
+        local_addrs  = %any
+        remote_addrs = 203.0.113.1
+
+        local {
+          auth  = pubkey
+          certs = sunCert.pem
+          id    = "C=CH, O=strongSwan, CN=sun.strongswan.org"
+        }
+
+        remote {
+          auth    = pubkey
+          cacerts = strongswanCa.pem
+          id      = "C=CH, O=strongSwan, CN=moon.strongswan.org"
+        }
+
+        children {
+          net {
+            remote_ts = 10.1.0.0/16
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Key Configuration Options
+
+### local section
+
+| Option | Description |
+|---|---|
+| `auth = pubkey` | Use public key (certificate) authentication |
+| `certs` | Comma-separated list of certificate files to offer. Paths are relative to `/etc/swanctl/x509/` or absolute. |
+| `id` | IKE identity — must match the certificate's Subject DN or a SubjectAltName |
+| `pubkeys` | Raw public key files (alternative to certificates) from `/etc/swanctl/pubkey/` |
+
+### remote section
+
+| Option | Description |
+|---|---|
+| `auth = pubkey` | Require the peer to use certificate authentication |
+| `cacerts` | Restrict accepted peers to those whose certificate chains to the listed CA(s). Paths relative to `/etc/swanctl/x509ca/` |
+| `certs` | Pin authentication to a specific peer certificate |
+| `ca_id` | Match an identity found in an intermediate CA certificate — without needing the CA cert locally |
+| `revocation` | Revocation policy: `strict`, `ifuri` (default: `relaxed`) |
+| `cert_policy` | Require specific certificate policy OIDs (dotted notation) |
+
+## Certificate File Locations
+
+strongSwan's `swanctl` tool loads certificates from well-known directories:
+
+```
+/etc/swanctl/
+├── x509/          # End-entity certificates (PEM or DER)
+├── x509ca/        # CA certificates
+├── x509crl/       # Certificate Revocation Lists
+├── x509ocsp/      # OCSP signer certificates
+├── private/       # Private keys
+├── pubkey/        # Raw public keys
+└── pkcs12/        # PKCS#12 bundles (imported on load)
+```
+
+Relative paths in `certs` and `cacerts` are resolved against these directories. Absolute paths may also be used.
+
+## Restricting to a Specific CA
+
+Use `cacerts` in the `remote` section to restrict which peers can authenticate. Only peers whose certificate chains back to one of the listed CAs will be accepted:
+
+```ini
+remote {
+  auth    = pubkey
+  cacerts = companyCA.pem, partnerCA.pem
+}
+```
+
+<Note>
+If `cacerts` is omitted, strongSwan accepts any certificate that chains to a CA loaded from `/etc/swanctl/x509ca/`. Specifying `cacerts` explicitly is recommended for production deployments.
+</Note>
+
+## Constraining Key Types and Hash Algorithms
+
+You can require minimum key strengths and restrict hash algorithms used during authentication:
+
+```ini
+remote {
+  # Require RSA >= 2048-bit or ECDSA >= 256-bit, with SHA-256 or better
+  auth = rsa-2048-sha256-sha384-sha512, ecdsa-256-sha256-sha384
+}
+```
+
+For IKEv2 signature scheme constraints (RFC 7427), prefix with `ike:` in the `local` section:
+
+```ini
+local {
+  auth = ike:rsa/pss-sha384-sha256
+}
+```
+
+## Certificate Revocation
+
+strongSwan checks certificate revocation via CRL and OCSP. The `revocation` option in the `remote` section controls the policy:
+
+| Policy | Behavior |
+|---|---|
+| `relaxed` (default) | Fail only if a certificate is explicitly revoked |
+| `ifuri` | Fail if a CRL/OCSP URI is present but unreachable |
+| `strict` | Fail if no revocation information is available at all |
+
+```ini
+remote {
+  auth       = pubkey
+  cacerts    = strongswanCa.pem
+  revocation = strict
+}
+```
+
+Enable CRL caching and OCSP stapling in `strongswan.conf`:
+
+```ini
+# /etc/strongswan.conf
+charon {
+  cache_crls = yes
+}
+```
+
+## Multi-Round Authentication (IKEv2)
+
+RFC 4739 allows multiple authentication rounds in a single IKE session. Use suffixed `local` and `remote` sections:
+
+```ini
+connections {
+  vpn-dual {
+    local {
+      # Round 1: certificate
+      auth  = pubkey
+      certs = gatewaycert.pem
+    }
+    local2 {
+      # Round 2: EAP
+      auth   = eap-mschapv2
+      eap_id = %any
+    }
+
+    remote {
+      auth    = pubkey
+      cacerts = trustedCA.pem
+    }
+    remote2 {
+      auth = eap-mschapv2
+    }
+  }
+}
+```
+
+<Tip>
+You can use the `round` keyword in each section to explicitly control ordering, rather than relying on declaration order.
+</Tip>
+
+## Windows and iOS Compatibility
+
+Many clients (Windows, iOS, Android) require the server certificate to contain the `serverAuth` Extended Key Usage (EKU) OID (`1.3.6.1.5.5.7.3.1`). Ensure your CA issues server certificates with this EKU.
+
+```ini
+# Example openssl extension for server cert
+[ server_ext ]
+extendedKeyUsage = serverAuth
+subjectAltName   = DNS:vpn.example.org
+```
+
+## Importing PKCS#12 Bundles
+
+PKCS#12 (`.p12`) bundles containing a certificate, private key, and CA chain can be placed in `/etc/swanctl/pkcs12/`. strongSwan imports them automatically on `swanctl --load-creds`:
+
+```bash
+cp client.p12 /etc/swanctl/pkcs12/
+swanctl --load-creds
+```
+
+If the bundle is password-protected, add a decryption passphrase to `swanctl.conf`:
+
+```ini
+secrets {
+  pkcs12-client {
+    file   = client.p12
+    secret = "bundle-passphrase"
+  }
+}
+```
+
+## Sending Certificate Payloads
+
+Control when strongSwan includes certificate payloads in IKE messages with `send_cert` on the connection:
+
+| Value | Behavior |
+|---|---|
+| `ifasked` (default) | Send only when a certificate request is received |
+| `always` | Always send the certificate |
+| `never` | Never send the certificate |
+
+```ini
+connections {
+  vpn {
+    send_cert = always
+    # ...
+  }
+}
+```

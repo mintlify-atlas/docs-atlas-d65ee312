@@ -1,0 +1,289 @@
+---
+title: "SA Events"
+description: "VICI events fired when IKE and CHILD Security Associations change state."
+---
+
+The daemon fires these events asynchronously when SA state changes. Register for them using `EVENT_REGISTER` before the event can occur (see [protocol](/vici/protocol#events) for the registration sequence).
+
+## ike-updown
+
+Fired when an IKE_SA is established or terminated.
+
+<ResponseField name="up" type="string">
+  Present and set to `yes` for an up (established) event. Absent on a down (terminated) event.
+</ResponseField>
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  SA data section named after the IKE configuration. Contains the same fields as the [`list-sa`](#list-sa) event, but **without** the `child-sas` subsection.
+</ResponseField>
+
+---
+
+## ike-rekey
+
+Fired when an IKE_SA is rekeyed.
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  SA data section containing two subsections:
+  <Expandable title="fields">
+    <ResponseField name="old" type="section">
+      The old IKE_SA data (same fields as `list-sa`, without `child-sas`).
+    </ResponseField>
+    <ResponseField name="new" type="section">
+      The new IKE_SA data (same fields as `list-sa`, without `child-sas`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## ike-update
+
+Fired when the local or remote endpoint address of an IKE_SA is about to change (MOBIKE or similar). At least one address or port differs from the previous value.
+
+<ResponseField name="local-host" type="string">
+  New local IKE endpoint address.
+</ResponseField>
+
+<ResponseField name="local-port" type="string">
+  New local IKE endpoint port.
+</ResponseField>
+
+<ResponseField name="remote-host" type="string">
+  New remote IKE endpoint address.
+</ResponseField>
+
+<ResponseField name="remote-port" type="string">
+  New remote IKE endpoint port.
+</ResponseField>
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  SA data listing the **old** addresses/ports (same fields as `list-sa`, without `child-sas`).
+</ResponseField>
+
+---
+
+## child-updown
+
+Fired when a CHILD_SA is established or terminated.
+
+<ResponseField name="up" type="string">
+  Present and set to `yes` for an up (established) event. Absent on a down (terminated) event.
+</ResponseField>
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  SA data section (same fields as `list-sa`) containing only the affected CHILD_SA in `child-sas`.
+</ResponseField>
+
+---
+
+## child-rekey
+
+Fired when a CHILD_SA is rekeyed.
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  SA data section (same fields as `list-sa`) where `child-sas` contains:
+  <Expandable title="child-sas structure">
+    <ResponseField name="<child-sa-name>" type="section">
+      <Expandable title="fields">
+        <ResponseField name="old" type="section">
+          The old CHILD_SA data (same fields as in `list-sa`).
+        </ResponseField>
+        <ResponseField name="new" type="section">
+          The new CHILD_SA data (same fields as in `list-sa`).
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## list-sa
+
+Streamed during an active `list-sas` command. Each event carries one IKE_SA and its CHILD_SAs.
+
+<ResponseField name="<IKE_SA config name>" type="section">
+  <Expandable title="IKE_SA fields">
+    <ResponseField name="uniqueid" type="string">Unique IKE_SA identifier.</ResponseField>
+    <ResponseField name="version" type="string">IKE version: `1` or `2`.</ResponseField>
+    <ResponseField name="state" type="string">IKE_SA state name.</ResponseField>
+    <ResponseField name="local-host" type="string">Local IKE endpoint address.</ResponseField>
+    <ResponseField name="local-port" type="string">Local IKE endpoint port.</ResponseField>
+    <ResponseField name="local-id" type="string">Local IKE identity.</ResponseField>
+    <ResponseField name="remote-host" type="string">Remote IKE endpoint address.</ResponseField>
+    <ResponseField name="remote-port" type="string">Remote IKE endpoint port.</ResponseField>
+    <ResponseField name="remote-id" type="string">Remote IKE identity.</ResponseField>
+    <ResponseField name="remote-xauth-id" type="string">Remote XAuth identity (XAuth-authenticated sessions only).</ResponseField>
+    <ResponseField name="remote-eap-id" type="string">Remote EAP identity (EAP-authenticated sessions only).</ResponseField>
+    <ResponseField name="initiator" type="string">`yes` if this peer initiated the IKE_SA.</ResponseField>
+    <ResponseField name="initiator-spi" type="string">Hex-encoded initiator SPI / cookie.</ResponseField>
+    <ResponseField name="responder-spi" type="string">Hex-encoded responder SPI / cookie.</ResponseField>
+    <ResponseField name="nat-local" type="string">`yes` if the local endpoint is behind NAT.</ResponseField>
+    <ResponseField name="nat-remote" type="string">`yes` if the remote endpoint is behind NAT.</ResponseField>
+    <ResponseField name="nat-fake" type="string">`yes` if the NAT situation was faked as responder.</ResponseField>
+    <ResponseField name="nat-any" type="string">`yes` if any endpoint is behind NAT (including faked).</ResponseField>
+    <ResponseField name="if-id-in" type="string">Hex-encoded default inbound XFRM interface ID.</ResponseField>
+    <ResponseField name="if-id-out" type="string">Hex-encoded default outbound XFRM interface ID.</ResponseField>
+    <ResponseField name="encr-alg" type="string">IKE encryption algorithm name.</ResponseField>
+    <ResponseField name="encr-keysize" type="string">Key size for `encr-alg`, if applicable.</ResponseField>
+    <ResponseField name="integ-alg" type="string">IKE integrity algorithm name.</ResponseField>
+    <ResponseField name="integ-keysize" type="string">Key size for integrity algorithm, if applicable.</ResponseField>
+    <ResponseField name="prf-alg" type="string">IKE pseudo-random function name.</ResponseField>
+    <ResponseField name="dh-group" type="string">IKE key exchange method name.</ResponseField>
+    <ResponseField name="ake1 … ake7" type="string">Additional IKE key exchange method names (post-quantum hybrid KE), if negotiated.</ResponseField>
+    <ResponseField name="established" type="string">Seconds the IKE_SA has been established.</ResponseField>
+    <ResponseField name="rekey-time" type="string">Seconds until the IKE_SA is rekeyed.</ResponseField>
+    <ResponseField name="reauth-time" type="string">Seconds until the IKE_SA is re-authenticated.</ResponseField>
+    <ResponseField name="local-vips" type="list">Virtual IPs assigned by the remote peer, installed locally.</ResponseField>
+    <ResponseField name="remote-vips" type="list">Virtual IPs assigned to the remote peer.</ResponseField>
+    <ResponseField name="tasks-queued" type="list">Tasks queued for execution.</ResponseField>
+    <ResponseField name="tasks-active" type="list">Tasks currently being initiated actively.</ResponseField>
+    <ResponseField name="tasks-passive" type="list">Tasks currently being handled passively.</ResponseField>
+    <ResponseField name="child-sas" type="section">
+      One subsection per CHILD_SA, named `<child-sa-name>` (unique within this IKE_SA).
+      <Expandable title="CHILD_SA fields">
+        <ResponseField name="name" type="string">CHILD_SA configuration name.</ResponseField>
+        <ResponseField name="uniqueid" type="string">Unique CHILD_SA identifier.</ResponseField>
+        <ResponseField name="reqid" type="string">Request ID of the CHILD_SA.</ResponseField>
+        <ResponseField name="state" type="string">CHILD_SA state string.</ResponseField>
+        <ResponseField name="mode" type="string">IPsec mode: `tunnel`, `transport`, or `beet`.</ResponseField>
+        <ResponseField name="protocol" type="string">IPsec protocol: `AH` or `ESP`.</ResponseField>
+        <ResponseField name="encap" type="string">`yes` if using UDP encapsulation.</ResponseField>
+        <ResponseField name="spi-in" type="string">Hex-encoded inbound SPI.</ResponseField>
+        <ResponseField name="spi-out" type="string">Hex-encoded outbound SPI.</ResponseField>
+        <ResponseField name="encr-alg" type="string">ESP encryption algorithm name.</ResponseField>
+        <ResponseField name="encr-keysize" type="string">ESP encryption key size, if applicable.</ResponseField>
+        <ResponseField name="integ-alg" type="string">ESP or AH integrity algorithm name.</ResponseField>
+        <ResponseField name="esn" type="string">`1` if using extended sequence numbers.</ResponseField>
+        <ResponseField name="bytes-in" type="string">Input bytes processed.</ResponseField>
+        <ResponseField name="packets-in" type="string">Input packets processed.</ResponseField>
+        <ResponseField name="bytes-out" type="string">Output bytes processed.</ResponseField>
+        <ResponseField name="packets-out" type="string">Output packets processed.</ResponseField>
+        <ResponseField name="rekey-time" type="string">Seconds until CHILD_SA is rekeyed.</ResponseField>
+        <ResponseField name="life-time" type="string">Seconds until CHILD_SA expires.</ResponseField>
+        <ResponseField name="install-time" type="string">Seconds the CHILD_SA has been installed.</ResponseField>
+        <ResponseField name="local-ts" type="list">Local traffic selectors.</ResponseField>
+        <ResponseField name="remote-ts" type="list">Remote traffic selectors.</ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## list-policy
+
+Streamed during an active `list-policies` command. Each event describes one installed policy.
+
+<ResponseField name="<ike-config/child-config>" type="section">
+  <Expandable title="fields">
+    <ResponseField name="child" type="string">CHILD_SA configuration name.</ResponseField>
+    <ResponseField name="ike" type="string">IKE_SA configuration name or namespace, if available.</ResponseField>
+    <ResponseField name="mode" type="string">Policy mode: `tunnel`, `transport`, `pass`, or `drop`.</ResponseField>
+    <ResponseField name="label" type="string">Hex-encoded security label, if set.</ResponseField>
+    <ResponseField name="local-ts" type="list">Local traffic selectors.</ResponseField>
+    <ResponseField name="remote-ts" type="list">Remote traffic selectors.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## list-conn
+
+Streamed during an active `list-conns` command. Each event describes one loaded connection.
+
+<ResponseField name="<IKE_SA connection name>" type="section">
+  <Expandable title="fields">
+    <ResponseField name="local_addrs" type="list">Valid local IKE endpoint addresses.</ResponseField>
+    <ResponseField name="remote_addrs" type="list">Valid remote IKE endpoint addresses.</ResponseField>
+    <ResponseField name="local_port" type="string">Local IKE endpoint port.</ResponseField>
+    <ResponseField name="remote_port" type="string">Remote IKE endpoint port.</ResponseField>
+    <ResponseField name="version" type="string">IKE version: `IKEv1`, `IKEv2`, or `0` for any.</ResponseField>
+    <ResponseField name="reauth_time" type="string">IKE_SA reauthentication interval in seconds.</ResponseField>
+    <ResponseField name="rekey_time" type="string">IKE_SA rekeying interval in seconds.</ResponseField>
+    <ResponseField name="local*, remote*" type="section">Multiple authentication sections. Each contains `class`, `eap-type`, `id`, `certs`, `cacerts`, `groups`, and related auth fields.</ResponseField>
+    <ResponseField name="children" type="section">CHILD_SA configurations, each with `mode`, `rekey_time`, `rekey_bytes`, `rekey_packets`, `local-ts`, and `remote-ts`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## list-cert
+
+Streamed during an active `list-certs` command.
+
+<ResponseField name="type" type="string">Certificate type: `X509`, `X509_AC`, `X509_CRL`, `OCSP_RESPONSE`, or `PUBKEY`.</ResponseField>
+<ResponseField name="flag" type="string">X.509 certificate flag: `NONE`, `CA`, `AA`, or `OCSP`.</ResponseField>
+<ResponseField name="has_privkey" type="string">Set if a private key for this certificate is available in the daemon.</ResponseField>
+<ResponseField name="data" type="string">ASN.1 encoded certificate data.</ResponseField>
+<ResponseField name="subject" type="string">Subject string. Present when `type` is `PUBKEY`.</ResponseField>
+<ResponseField name="not-before" type="string">Validity start time. Present when `type` is `PUBKEY`.</ResponseField>
+<ResponseField name="not-after" type="string">Validity end time. Present when `type` is `PUBKEY`.</ResponseField>
+
+---
+
+## list-authority
+
+Streamed during an active `list-authorities` command.
+
+<ResponseField name="<CA name>" type="section">
+  <Expandable title="fields">
+    <ResponseField name="cacert" type="string">Subject distinguished name of the CA certificate.</ResponseField>
+    <ResponseField name="crl_uris" type="list">CRL distribution URIs (`http`, `ldap`, or `file`).</ResponseField>
+    <ResponseField name="ocsp_uris" type="list">OCSP responder URIs (`http`).</ResponseField>
+    <ResponseField name="cert_uri_base" type="string">Base URI for downloading certificates using hash-and-URL.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## alert
+
+Fired for specific error conditions. Some alerts include an associated IKE_SA.
+
+<ResponseField name="type" type="string">
+  Alert type string. See the full list below.
+</ResponseField>
+
+<ResponseField name="ike-sa" type="section">
+  Present when the alert is associated with an IKE_SA. Contains a subsection named after the IKE configuration with the same fields as `list-sa` (without `child-sas`).
+</ResponseField>
+
+### Alert type values
+
+| Value | Description |
+|-------|-------------|
+| `authorization-failed` | An authorization hook failed |
+| `cert-exceeded-path-len` | Certificate trust chain length exceeds the configured limit |
+| `cert-expired` | Certificate rejected — it has expired |
+| `cert-no-issuer` | Certificate rejected — no trusted issuer found |
+| `cert-policy-violation` | Certificate rejected — other policy violation |
+| `cert-revoked` | Certificate rejected — it has been revoked |
+| `cert-untrusted-root` | Certificate rejected — root CA not trusted |
+| `cert-validation-failed` | Certificate rejected — status validation failed |
+| `half-open-timeout` | Half-open timeout reached before IKE_SA was established |
+| `ike-sa-expired` | IKE_SA hit hard lifetime limit before it could be rekeyed |
+| `install-child-policy-failed` | Installation of IPsec policy failed |
+| `install-child-sa-failed` | Installation of IPsec SAs failed |
+| `invalid-ike-spi` | Received IKE message with an invalid SPI |
+| `keep-on-child-sa-failure` | IKE_SA kept alive after a failed CHILD_SA establishment |
+| `local-auth-failed` | Local peer authentication failed (by us or by peer) |
+| `parse-error-body` | Received IKE message with an invalid body |
+| `parse-error-header` | Received IKE message with an invalid header |
+| `peer-addr-failed` | Failed to resolve peer address |
+| `peer-auth-failed` | Peer authentication failed |
+| `peer-init-unreachable` | Peer did not respond to the initial message |
+| `proposal-mismatch-child` | CHILD_SA proposals do not match |
+| `proposal-mismatch-ike` | IKE proposals do not match |
+| `radius-not-responding` | A RADIUS server did not respond |
+| `retransmit-receive` | Received a retransmit for a message |
+| `retransmit-send` | Sending a retransmit for a message |
+| `retransmit-send-cleared` | Received a response for a retransmitted request |
+| `retransmit-send-timeout` | Sending retransmits timed out |
+| `shutdown-signal` | A shutdown signal was received |
+| `ts-mismatch` | Traffic selectors do not match |
+| `ts-narrowed` | Traffic selectors were narrowed (by us or by peer) |
+| `unique-keep` | IKE_SA deleted due to `keep` unique policy |
+| `unique-replace` | IKE_SA deleted due to `replace` unique policy |
+| `vip-failure` | Allocating a virtual IP address failed |

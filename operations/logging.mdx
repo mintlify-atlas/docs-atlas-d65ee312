@@ -1,0 +1,204 @@
+---
+title: "Logging"
+description: "Configure logging for the charon daemon to diagnose and troubleshoot VPN connections."
+---
+
+charon has a flexible logging system that lets you route log output to files, syslog, and stderr simultaneously, with independent verbosity settings per subsystem.
+
+## Log subsystems
+
+charon divides its internal activity into named groups. You can set a verbosity level for each group independently.
+
+| Group | Description |
+|---|---|
+| `dmn` | Daemon management — startup, shutdown, plugin loading. |
+| `mgr` | IKE_SA manager — SA lookup and checkout. |
+| `ike` | IKE protocol messages and state machine. |
+| `chd` | CHILD_SA establishment and teardown. |
+| `job` | Job processing and scheduling. |
+| `cfg` | Configuration loading and parsing. |
+| `knl` | Kernel interface — XFRM policy and SA installation. |
+| `net` | Network socket — packet send/receive. |
+| `asn` | ASN.1 parsing (certificates, keys). |
+| `enc` | IKE message encoding and decoding. |
+| `tls` | TLS-based EAP methods (EAP-TLS, EAP-TTLS, EAP-PEAP). |
+| `esp` | ESP packet processing. |
+| `lib` | libstrongswan core library. |
+
+## Log levels
+
+| Level | Meaning |
+|---|---|
+| `-1` | Silent — no output for this group. |
+| `0` | Errors and critical messages only. |
+| `1` | Informational (default). |
+| `2` | More verbose — useful for debugging connection problems. |
+| `3` | Debug — includes raw message details. |
+| `4` | Most verbose — includes internal state tracing. |
+
+The special key `default` sets the level for all groups not explicitly listed.
+
+## Configuring log destinations
+
+Logging is configured under `charon { }` in `strongswan.conf`. You can define multiple destinations — each runs independently.
+
+### File logging
+
+```conf
+charon {
+  filelog {
+    /var/log/strongswan.log {
+      default = 1
+      ike = 2
+      knl = 2
+      flush_line = yes
+      time_format = %b %e %T
+    }
+  }
+}
+```
+
+| Option | Description |
+|---|---|
+| `default` | Fallback level for all groups not listed. |
+| `flush_line` | Flush after every line. Prevents log loss on crashes. Default is `no`. |
+| `time_format` | `strftime`-compatible timestamp format. Omit to suppress timestamps. |
+| `append` | Append to existing file (`yes`, default) or overwrite on start. |
+
+### Syslog
+
+```conf
+charon {
+  syslog {
+    daemon {
+      default = 1
+      ike = 1
+    }
+    auth {
+      default = -1
+      ike = 1
+    }
+  }
+}
+```
+
+The subsection name under `syslog` is the syslog facility (`daemon`, `auth`, `local0`–`local7`, etc.). You can route different groups to different facilities.
+
+### stderr
+
+```conf
+charon {
+  stderr {
+    default = 1
+    ike = 2
+  }
+}
+```
+
+Useful when running charon in the foreground or under a process supervisor that captures stderr.
+
+## Combining destinations
+
+You can log to multiple destinations simultaneously. A common production setup writes informational logs to a file and IKE detail to a separate debug log:
+
+```conf
+charon {
+  filelog {
+    /var/log/strongswan.log {
+      default = 1
+      time_format = %b %e %T
+      flush_line = yes
+    }
+    /var/log/strongswan-debug.log {
+      default = -1
+      ike = 3
+      knl = 3
+      chd = 3
+      flush_line = yes
+    }
+  }
+  syslog {
+    daemon {
+      default = 1
+    }
+  }
+}
+```
+
+## Increasing verbosity for troubleshooting
+
+<Steps>
+  <Step title="Identify the relevant subsystem">
+    For connection failures, start with `ike = 2` and `knl = 2`. For certificate issues add `cfg = 2` and `asn = 1`. For traffic not flowing, add `esp = 2`.
+  </Step>
+
+  <Step title="Edit strongswan.conf">
+    Add or update the level under your filelog or syslog destination:
+
+    ```conf
+    charon {
+      filelog {
+        /var/log/strongswan.log {
+          default = 1
+          ike = 3
+          knl = 3
+          cfg = 2
+          flush_line = yes
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Reload settings without restarting">
+    ```bash
+    swanctl --reload-settings
+    ```
+
+    charon re-reads `strongswan.conf` and applies the new log levels immediately. Active tunnels are not affected.
+  </Step>
+
+  <Step title="Reproduce the issue">
+    Initiate the connection and inspect the log:
+
+    ```bash
+    swanctl --initiate --child home
+    tail -f /var/log/strongswan.log
+    ```
+  </Step>
+
+  <Step title="Revert after debugging">
+    Set levels back to `1` and call `swanctl --reload-settings` again to avoid filling disk with verbose logs.
+  </Step>
+</Steps>
+
+## Live log streaming
+
+```bash
+swanctl --log
+```
+
+This streams charon log output directly to your terminal via the VICI socket — no file or syslog configuration required. It only captures log levels 0 and 1 (errors and informational). For higher verbosity you must configure a file or syslog destination.
+
+<Warning>
+  `swanctl --log` does not respect the verbosity levels set in `strongswan.conf`. It shows only default-level (0 and 1) messages regardless of your file log configuration.
+</Warning>
+
+## Log rotation
+
+Use `logrotate` with a `postrotate` script to signal charon to reopen the log file:
+
+```conf
+/var/log/strongswan.log {
+  daily
+  rotate 7
+  compress
+  missingok
+  notifempty
+  postrotate
+    swanctl --reload-settings
+  endscript
+}
+```
+
+Calling `--reload-settings` causes charon to close and reopen all configured log files, picking up the new (empty) file created by logrotate.

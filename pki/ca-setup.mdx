@@ -1,0 +1,127 @@
+---
+title: 'CA Setup'
+description: Create a Certificate Authority for issuing strongSwan VPN certificates.
+keywords: ['CA', 'certificate authority', 'pki', 'self-signed', 'Ed25519', 'RSA']
+---
+
+A Certificate Authority (CA) is the trust anchor for your VPN. Every gateway and client certificate you issue will be signed by it, and every peer will verify its certificate against the CA certificate. This page walks through creating a minimal, self-contained root CA using `pki`.
+
+<Steps>
+  <Step title="Generate the CA private key">
+    Create an Ed25519 private key (recommended):
+
+    ```bash
+    pki --gen --type ed25519 --outform pem > strongswanKey.pem
+    ```
+
+    Alternatively, generate a 3072-bit RSA key:
+
+    ```bash
+    pki --gen --type rsa --size 3072 --outform pem > strongswanKey.pem
+    ```
+
+    <Note>
+    Ed25519 produces compact 256-bit keys with 128-bit security and is supported by all modern IKEv2 implementations. RSA is more widely compatible with legacy systems.
+    </Note>
+
+    Key size guidance for RSA:
+
+    | Size | Security level | Recommended use |
+    |---|---|---|
+    | 2048 bits | ~112-bit | Legacy / interop only |
+    | 3072 bits | ~128-bit | Current standard |
+    | 4096 bits | ~140-bit | High-security environments |
+  </Step>
+
+  <Step title="Create the self-signed CA certificate">
+    Use `pki --self` to wrap the public key in a self-signed X.509 CA certificate with a 10-year lifetime (3652 days):
+
+    ```bash
+    pki --self --ca --lifetime 3652 \
+        --in strongswanKey.pem \
+        --dn "C=CH, O=strongSwan, CN=strongSwan Root CA" \
+        --outform pem > strongswanCert.pem
+    ```
+
+    Key options:
+
+    | Option | Description |
+    |---|---|
+    | `--ca` | Set the CA basic constraint and `keyCertSign` / `CRLSign` key usages |
+    | `--lifetime <days>` | Validity period in days (default: 1095) |
+    | `--dn <distinguished name>` | Subject DN in RFC 4514 format |
+    | `--outform pem` | Output as Base64 PEM instead of binary DER |
+  </Step>
+
+  <Step title="Inspect the CA certificate">
+    Verify the generated certificate:
+
+    ```bash
+    pki --print --in strongswanCert.pem
+    ```
+
+    Expected output:
+
+    ```text
+    subject:  "C=CH, O=strongSwan, CN=strongSwan Root CA"
+    issuer:   "C=CH, O=strongSwan, CN=strongSwan Root CA"
+    validity:  not before May 18 08:32:06 2017, ok
+               not after  May 18 08:32:06 2027, ok (expires in 3651 days)
+    serial:    57:e0:6b:3a:9a:eb:c6:e0
+    flags:     CA CRLSign self-signed
+    subjkeyId: 2b:95:14:5b:c3:22:87:de:d1:42:91:88:63:b3:d5:c1:92:7a:0f:5d
+    pubkey:    ED25519 256 bits
+    keyid:     a7:e1:6a:3f:e7:6f:08:9d:89:ec:23:92:a9:a1:14:3c:78:a8:7a:f7
+    subjkey:   2b:95:14:5b:c3:22:87:de:d1:42:91:88:63:b3:d5:c1:92:7a:0f:5d
+    ```
+
+    Confirm that `flags` includes `CA` and `CRLSign`, and that `issuer` equals `subject` (self-signed).
+  </Step>
+
+  <Step title="Store and distribute the CA files">
+    | File | Where it goes | Who needs it |
+    |---|---|---|
+    | `strongswanKey.pem` | Secure offline storage (not on any VPN gateway) | CA operator only |
+    | `strongswanCert.pem` | `/etc/swanctl/x509ca/` on every VPN endpoint | All gateways and clients |
+
+    Copy the CA certificate to each host:
+
+    ```bash
+    install -m 644 strongswanCert.pem /etc/swanctl/x509ca/
+    ```
+
+    Then reload credentials on each host:
+
+    ```bash
+    swanctl --load-creds
+    ```
+  </Step>
+</Steps>
+
+## Intermediate CAs
+
+For larger deployments, issue an intermediate CA certificate instead of signing end-entity certificates directly from the root. This limits exposure of the root key.
+
+First issue an intermediate CA cert from your root CA:
+
+```bash
+# Generate the intermediate key
+pki --gen --type ed25519 --outform pem > interKey.pem
+
+# Issue the intermediate CA certificate
+pki --issue --cacert strongswanCert.pem --cakey strongswanKey.pem \
+    --ca --lifetime 1826 \
+    --in interKey.pem \
+    --dn "C=CH, O=strongSwan, CN=strongSwan Intermediate CA" \
+    --outform pem > interCert.pem
+```
+
+The `--ca` flag on `pki --issue` sets the `CA:TRUE` basic constraint, making the issued certificate capable of signing further certificates.
+
+<Info>
+Place both the intermediate certificate and the root CA certificate in `/etc/swanctl/x509ca/`. strongSwan will automatically build the chain.
+</Info>
+
+<Warning>
+Protect the CA private key rigorously. Anyone with access to `strongswanKey.pem` can issue arbitrary certificates that your VPN peers will trust. Store it on encrypted offline media and keep it air-gapped from production systems.
+</Warning>

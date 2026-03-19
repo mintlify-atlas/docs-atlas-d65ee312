@@ -1,0 +1,99 @@
+---
+title: Introduction
+description: strongSwan is an open-source IPsec-based VPN solution implementing IKEv1 and IKEv2 for Linux, Android, and other platforms.
+---
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up your first VPN tunnel in minutes with site-to-site or roadwarrior configuration
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install strongSwan on Linux, from source or via package managers
+  </Card>
+  <Card title="swanctl Configuration" icon="gear" href="/configuration/swanctl-conf">
+    Learn the modern swanctl.conf format for defining connections and credentials
+  </Card>
+  <Card title="VICI Protocol" icon="plug" href="/vici/overview">
+    Programmatically control and monitor the charon daemon via the VICI interface
+  </Card>
+</CardGroup>
+
+## What is strongSwan?
+
+strongSwan is an open-source, standards-compliant IPsec VPN solution. It runs on Linux, Android, FreeBSD, macOS, Windows, and other platforms, implementing both **IKEv1** and **IKEv2** key exchange protocols.
+
+The core daemon, **charon**, handles all IKE negotiation and IPsec security association management. It is controlled via the **swanctl** command-line tool and the **VICI** (Versatile IKE Control Interface) protocol.
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="IKEv1 & IKEv2" icon="shield-halved">
+    Full implementation of both IKE versions with support for all standard authentication methods
+  </Card>
+  <Card title="Flexible Authentication" icon="key">
+    X.509 certificates, PSK, EAP (MD5, MSCHAPv2, TLS, PEAP, RADIUS), XAuth, and more
+  </Card>
+  <Card title="Plugin Architecture" icon="puzzle-piece">
+    70+ plugins for cryptography, kernel integration, EAP methods, and protocol extensions
+  </Card>
+  <Card title="PKI Toolchain" icon="certificate">
+    Built-in `pki` tool for generating CAs, certificates, CRLs, and PKCS#12 bundles
+  </Card>
+  <Card title="Virtual IP Pools" icon="network-wired">
+    Assign virtual IP addresses to roadwarrior clients from configurable address pools
+  </Card>
+  <Card title="High Availability" icon="server">
+    HA clustering support for active-passive gateway failover
+  </Card>
+  <Card title="TPM 2.0 Support" icon="microchip">
+    Secure key storage using Trusted Platform Module hardware
+  </Card>
+  <Card title="RADIUS Integration" icon="tower-broadcast">
+    EAP-RADIUS plugin for centralized authentication against RADIUS servers
+  </Card>
+</CardGroup>
+
+## Architecture overview
+
+```
+┌─────────────────────────────────────────────────┐
+│                  User Space                       │
+│                                                   │
+│   swanctl ──── VICI ──── charon daemon           │
+│                              │                    │
+│                         ┌────┴────┐               │
+│                         │Plugins  │               │
+│                         │ kernel  │               │
+│                         │ crypto  │               │
+│                         │  eap    │               │
+│                         └────┬────┘               │
+└──────────────────────────────┼────────────────────┘
+                               │
+┌──────────────────────────────┼────────────────────┐
+│                 Kernel Space  │                    │
+│                               ▼                    │
+│              XFRM / PF_KEY (IPsec SA/SP)          │
+└─────────────────────────────────────────────────  ┘
+```
+
+The **charon** IKE daemon runs in user space and communicates with the Linux kernel's XFRM framework (or PF_KEY on BSD) to install IPsec Security Associations (SAs) and Security Policies (SPs). The **swanctl** tool connects to charon via the Unix socket at `/var/run/charon.vici` using the VICI protocol.
+
+## Configuration approach
+
+strongSwan uses a two-file configuration approach:
+
+| File | Purpose |
+|------|---------|
+| `/etc/swanctl/swanctl.conf` | VPN connections, credentials, IP pools |
+| `/etc/strongswan.conf` | Daemon settings, plugin configuration, logging |
+
+<Note>
+The modern configuration interface uses **swanctl** with `swanctl.conf`. The legacy **ipsec** command with `ipsec.conf` is deprecated but still supported via the stroke plugin.
+</Note>
+
+## Common deployment scenarios
+
+- **[Site-to-Site VPN](/scenarios/site-to-site)** — Connect two networks through an encrypted IPsec tunnel
+- **[Host-to-Host VPN](/scenarios/host-to-host)** — Encrypt traffic between two individual hosts
+- **[Roadwarrior VPN](/scenarios/roadwarrior)** — Gateway serving dynamic remote clients with certificate auth
+- **[Roadwarrior with EAP](/scenarios/roadwarrior-eap)** — Password-based authentication for mobile clients

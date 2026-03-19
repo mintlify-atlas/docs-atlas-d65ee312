@@ -1,0 +1,232 @@
+---
+title: "Traffic Selectors"
+description: Configure which traffic flows through the IPsec tunnel using traffic selectors
+keywords: ["traffic selectors", "local_ts", "remote_ts", "tunnel", "transport", "pass", "drop", "bypass", "virtual ip", "dynamic", "swanctl", "ipsec"]
+---
+
+Traffic selectors (TS) define which source and destination IP addresses, protocols, and ports are protected by an IPsec CHILD_SA. When the kernel has a matching IPsec policy installed, packets that fall within the traffic selector are encrypted (or processed according to the policy mode) before being forwarded.
+
+## How traffic selectors work
+
+During IKEv2 `CREATE_CHILD_SA` negotiation, both peers propose traffic selectors. The responder can **narrow** the proposed selectors — accepting only a subset of what the initiator proposed — but it cannot widen them. The final, negotiated selectors are what get installed as kernel IPsec policies.
+
+For example, if the initiator proposes `0.0.0.0/0` (all traffic) and the responder has `local_ts = 10.0.0.0/8`, the responder narrows the selector to `10.0.0.0/8`. Only traffic destined for `10.0.0.0/8` flows through the tunnel.
+
+## Configuration
+
+Traffic selectors are set per CHILD_SA in the `children` section of `swanctl.conf`:
+
+```text
+connections {
+  example {
+    # ... IKE and auth config ...
+    children {
+      my-child {
+        local_ts  = 10.0.0.0/8       # traffic originating from this side
+        remote_ts = 192.168.0.0/16   # traffic destined to the remote side
+      }
+    }
+  }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `local_ts` | `dynamic` | Comma-separated list of local selectors (subnets, addresses, or `dynamic`) |
+| `remote_ts` | `dynamic` | Comma-separated list of remote selectors |
+
+## Selector syntax
+
+### Subnets and addresses
+
+```text
+local_ts = 0.0.0.0/0              # all IPv4 traffic (tunnel all)
+local_ts = 10.0.0.0/8             # a class A private subnet
+local_ts = 192.168.1.1/32         # a single host
+local_ts = 2001:db8::/32          # an IPv6 prefix
+```
+
+### Protocol and port restriction
+
+Append a selector in square brackets to restrict by protocol and/or port:
+
+```text
+local_ts = 10.0.0.0/8[tcp]        # TCP traffic only
+local_ts = 10.0.0.0/8[tcp/443]    # HTTPS traffic only
+local_ts = 0.0.0.0/0[udp/1701]    # L2TP (used with L2TP/IPsec)
+local_ts = 0.0.0.0/0[icmp]        # ICMP traffic only
+```
+
+Protocols can be specified by name (e.g., `tcp`, `udp`, `icmp`, `ipv6-icmp`) or by number. Ports can be numeric or a service name resolved via `getservent(3)`. Port ranges are accepted in the configuration syntax, though current Linux kernel XFRM backends do not support port ranges.
+
+<Note>
+  For ICMP, specifying a port value less than 256 is interpreted as the ICMP type. A value of 256 or greater is interpreted as type (high byte) and code (low byte) combined.
+</Note>
+
+### Multiple selectors
+
+Comma-separate multiple selectors to match traffic from or to several subnets in a single CHILD_SA:
+
+```text
+local_ts  = 10.0.0.0/8, 172.16.0.0/12
+remote_ts = 192.168.0.0/16, 198.51.100.0/24
+```
+
+<Warning>
+  IKEv1 supports only a single traffic selector pair per CHILD_SA. When using IKEv1, define separate `children` entries for each selector pair. The multiple-selector syntax above applies only to IKEv2.
+</Warning>
+
+### `%dynamic`
+
+The special value `%dynamic` is a placeholder that is replaced at runtime by the tunnel outer address, or by the virtual IP if one has been negotiated. This is the default for both `local_ts` and `remote_ts`.
+
+Use `%dynamic` on roadwarrior clients so the traffic selector tracks whatever virtual IP the gateway assigns:
+
+```text
+connections {
+  roadwarrior {
+    local {
+      auth = pubkey
+      certs = client.pem
+    }
+    remote {
+      auth = pubkey
+      id = vpn.example.com
+    }
+    children {
+      rw {
+        local_ts  = %dynamic   # replaced by assigned virtual IP
+        remote_ts = 10.0.0.0/8
+        start_action = start
+      }
+    }
+  }
+}
+```
+
+## Traffic selector narrowing
+
+TS narrowing allows a responder to accept a connection that proposes a wide selector while installing a narrower policy. This is commonly used on gateways serving roadwarriors:
+
+- Client proposes `remote_ts = 0.0.0.0/0`
+- Gateway has `local_ts = 10.0.0.0/8`
+- Gateway narrows: only `10.0.0.0/8` is installed in the kernel
+
+strongSwan performs TS narrowing by default for IKEv2. For IKEv1 it also applies narrowing, but this can cause interoperability issues with some third-party implementations; configure identical selectors on both peers to avoid problems.
+
+## Policy modes
+
+The `mode` option in a `children` section controls what the IPsec policy does with matched traffic:
+
+| Mode | Description |
+|---|---|
+| `tunnel` (default) | Encrypt in IPsec Tunnel Mode — adds outer IP header |
+| `transport` | Encrypt in IPsec Transport Mode — protects original IP payload only |
+| `pass` | Bypass policy — allow matching traffic to flow in plaintext |
+| `drop` | Block policy — drop matching traffic |
+
+```text
+children {
+  vpn-tunnel {
+    mode = tunnel       # default: encrypted tunnel
+    local_ts  = 10.0.0.0/8
+    remote_ts = 192.168.0.0/16
+  }
+}
+```
+
+### Bypass policies
+
+A bypass policy (`mode = pass`) installs a shunt that explicitly excludes traffic from IPsec processing. This is useful when you have a broad `drop` policy but need to allow specific local traffic (for example, IKE itself or a management network):
+
+```text
+children {
+  # Encrypt remote subnet traffic
+  vpn {
+    mode = tunnel
+    local_ts  = 0.0.0.0/0
+    remote_ts = 192.168.1.0/24
+  }
+  # Allow local LAN traffic without IPsec
+  bypass-local {
+    mode = pass
+    local_ts  = 10.0.0.0/24
+    remote_ts = 10.0.0.0/24
+  }
+}
+```
+
+<Tip>
+  `pass` and `drop` policies do not require an IKE exchange. They are installed immediately when swanctl loads the configuration, not when a tunnel is established.
+</Tip>
+
+## Common patterns
+
+### Tunnel all client traffic (split tunneling off)
+
+```text
+children {
+  full-tunnel {
+    local_ts  = %dynamic
+    remote_ts = 0.0.0.0/0   # route everything through the VPN
+  }
+}
+```
+
+### Split tunneling (corporate subnet only)
+
+```text
+children {
+  split {
+    local_ts  = %dynamic
+    remote_ts = 10.0.0.0/8, 172.16.0.0/12
+  }
+}
+```
+
+### Site-to-site with specific subnets
+
+```text
+children {
+  site-a-to-site-b {
+    local_ts  = 192.168.10.0/24
+    remote_ts = 192.168.20.0/24
+  }
+}
+```
+
+### L2TP over IPsec (transport mode)
+
+```text
+children {
+  l2tp {
+    mode = transport
+    local_ts  = 0.0.0.0/0[udp/1701]
+    remote_ts = 0.0.0.0/0[udp/1701]
+    encap = yes
+  }
+}
+```
+
+## Checking installed policies
+
+After a CHILD_SA is established, verify the installed traffic selectors:
+
+```bash
+swanctl --list-sas
+```
+
+The output shows the negotiated selectors under each CHILD_SA:
+
+```text
+example: #1, ESTABLISHED, IKEv2, ...
+  example: #1, reqid 1, INSTALLED, TUNNEL, ESP ...
+    local  10.0.0.0/8
+    remote 192.168.0.0/16
+```
+
+For kernel-level policy inspection, use `ip xfrm policy` (Linux):
+
+```bash
+ip xfrm policy
+```

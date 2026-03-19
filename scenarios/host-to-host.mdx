@@ -1,0 +1,132 @@
+---
+title: "Host-to-Host VPN"
+description: Encrypt traffic between two individual hosts using IPsec tunnel mode
+keywords: ["host-to-host", "vpn", "ipsec", "swanctl", "tunnel mode", "transport mode"]
+---
+
+In this scenario two individual hosts establish an IPsec connection directly between themselves. There are no subnets to protect — only traffic between the two endpoints is encrypted.
+
+## Network topology
+
+```text
+| 192.168.0.1 | === | 192.168.0.2 |
+     moon                sun
+```
+
+Both hosts authenticate each other with X.509 certificates issued by a shared CA.
+
+<Note>
+  IPsec **transport mode** is the natural fit for host-to-host connections because there is no inner subnet to encapsulate. However, this configuration uses the default **tunnel mode**, which also works correctly and is simpler to extend later if subnets are added.
+</Note>
+
+## Certificate files
+
+Place the following files on each host:
+
+<Tabs>
+  <Tab title="moon">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/moonCert.pem
+    /etc/swanctl/private/moonKey.pem
+    ```
+  </Tab>
+  <Tab title="sun">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/sunCert.pem
+    /etc/swanctl/private/sunKey.pem
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+<Tabs>
+  <Tab title="moon (192.168.0.1)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        host-host {
+            remote_addrs = 192.168.0.2
+
+            local {
+                auth = pubkey
+                certs = moonCert.pem
+            }
+            remote {
+                auth = pubkey
+                id = "C=CH, O=strongSwan, CN=sun.strongswan.org"
+            }
+            children {
+                net-net {
+                    start_action = trap
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="sun (192.168.0.2)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        host-host {
+            remote_addrs = 192.168.0.1
+
+            local {
+                auth = pubkey
+                certs = sunCert.pem
+            }
+            remote {
+                auth = pubkey
+                id = "C=CH, O=strongSwan, CN=moon.strongswan.org"
+            }
+            children {
+                host-host {
+                    start_action = trap
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Because no `local_ts` or `remote_ts` are specified in the `children` block, the traffic selectors default to the host addresses themselves (`192.168.0.1/32` and `192.168.0.2/32`), which is correct for a host-to-host setup.
+
+## Loading configuration and verifying the connection
+
+<Steps>
+  <Step title="Load credentials">
+    Load certificates and private keys into the charon daemon on both hosts:
+
+    ```bash
+    swanctl --load-creds
+    ```
+  </Step>
+  <Step title="Load connections">
+    Apply the connection definitions:
+
+    ```bash
+    swanctl --load-conns
+    ```
+  </Step>
+  <Step title="Trigger and verify">
+    The tunnel is established automatically when traffic between the two hosts is detected (`start_action = trap`). Check active security associations:
+
+    ```bash
+    swanctl --list-sas
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  To trigger the tunnel immediately without waiting for matching traffic, initiate it manually:
+
+  ```bash
+  swanctl --initiate --child net-net
+  ```
+</Tip>

@@ -1,0 +1,141 @@
+---
+title: "pki --print"
+description: Print human-readable information about certificates, CRLs, and keys.
+sidebarTitle: "--print"
+---
+
+`pki --print` parses and displays the contents of certificates, CRLs, public keys, private keys, and PKCS#10 CSRs in a human-readable format.
+
+## Synopsis
+
+```bash
+pki --print [--in <file>] [--type <type>] [--outform <format>]
+```
+
+## Options
+
+<ParamField path="--in" type="string">
+  Input file to parse (PEM or DER). If omitted, reads from stdin. The format is detected automatically.
+</ParamField>
+
+<ParamField path="--keyid" type="string">
+  Hex-encoded CKA_ID of a key or certificate on a token.
+</ParamField>
+
+<ParamField path="--type" type="string" default="x509">
+  Force interpretation of the input as a specific credential type. Accepted values:
+  - `x509` — X.509 certificate (default)
+  - `crl` — Certificate Revocation List
+  - `ac` — Attribute Certificate
+  - `pub` — raw public key
+  - `priv` — private key (auto-detect algorithm)
+  - `rsa` / `rsa-priv` — RSA private key
+  - `ecdsa` / `ecdsa-priv` — ECDSA private key
+  - `ed25519` / `ed25519-priv` — Ed25519 private key
+  - `ed448` / `ed448-priv` — Ed448 private key
+  - `pkcs10` — PKCS#10 CSR
+</ParamField>
+
+<ParamField path="--outform" type="string">
+  Output encoding format. Used when re-encoding a credential after parsing.
+</ParamField>
+
+## Output fields
+
+The output format depends on the credential type.
+
+### X.509 certificate fields
+
+| Field | Description |
+|---|---|
+| `subject` | Subject Distinguished Name |
+| `issuer` | Issuer Distinguished Name |
+| `validity` | Not Before / Not After dates |
+| `serial` | Certificate serial number (hex) |
+| `flags` | Key usage and extended key usage flags |
+| `subjkey` | Subject key identifier (SHA-1 of public key) |
+| `authkey` | Authority key identifier |
+| `pubkey` | Public key type and size |
+| `keyid` | Public key fingerprint |
+| `subjAltNames` | Subject Alternative Names |
+| `CRL CDPs` | CRL Distribution Point URIs |
+| `OCSP` | OCSP responder URIs |
+
+### CRL fields
+
+| Field | Description |
+|---|---|
+| `issuer` | CA that signed the CRL |
+| `update` | This Update / Next Update dates |
+| `serial` | CRL number |
+| `revoked` | List of revoked certificates (serial, date, reason) |
+
+### Private key fields
+
+| Field | Description |
+|---|---|
+| `privkey` | Key algorithm and size |
+| `keyid` | Key fingerprint (SHA-1 of SubjectPublicKeyInfo) |
+| `subjkey` | Subject key identifier |
+
+## Examples
+
+Inspect an X.509 certificate:
+
+```bash
+pki --print --in moonCert.pem
+```
+
+Example output for a CA certificate:
+
+```text
+subject:  "C=CH, O=strongSwan, CN=strongSwan Root CA"
+issuer:   "C=CH, O=strongSwan, CN=strongSwan Root CA"
+validity:  not before Nov 22 10:19:13 2023, ok
+           not after  Nov 20 10:19:13 2033, ok (expires in 3649 days)
+serial:    4e:4d:65:2b:3d:54:d7:5c
+flags:     CA CRLSign self-signed
+subjkey:   51:ce:28:2e:60:47:1f:8c:d2:28:38:55:24:d1:d8:3f:1b:03:6d:43
+authkey:   51:ce:28:2e:60:47:1f:8c:d2:28:38:55:24:d1:d8:3f:1b:03:6d:43
+pubkey:    RSA 3072 bits
+keyid:     b2:08:41:e1:ef:3d:9c:8d:05:bd:a7:c5:1b:a4:0e:79:67:50:b4:a1
+```
+
+Example output for an end-entity certificate:
+
+```text
+subject:  "C=CH, O=strongSwan, CN=moon.strongswan.org"
+issuer:   "C=CH, O=strongSwan, CN=strongSwan Root CA"
+validity:  not before Nov 22 10:19:14 2023, ok
+           not after  Nov 21 10:19:14 2028, ok (expires in 1824 days)
+serial:    01
+flags:     serverAuth ikeIntermediate
+subjkey:   13:f0:4e:69:d0:22:78:17:38:18:29:66:4e:c9:08:f4:e2:e2:4e:90
+authkey:   51:ce:28:2e:60:47:1f:8c:d2:28:38:55:24:d1:d8:3f:1b:03:6d:43
+pubkey:    RSA 3072 bits
+keyid:     36:d9:c0:7e:7f:be:38:50:71:73:4d:47:45:3c:bc:7a:29:25:e7:8d
+subjAltNames:
+         DNS:moon.strongswan.org
+```
+
+Inspect a CRL:
+
+```bash
+pki --print --type crl --in strongswan.crl
+```
+
+Inspect a private key:
+
+```bash
+pki --print --type priv --in strongswanKey.pem
+```
+
+Inspect a PKCS#10 CSR:
+
+```bash
+pki --print --type pkcs10 --in moonReq.pem
+```
+
+<Tip>
+  Use `pki --print` to verify certificate contents before deploying them. Confirm that the subject, SANs, validity dates, and flags match your expectations.
+</Tip>

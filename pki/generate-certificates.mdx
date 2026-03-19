@@ -1,0 +1,160 @@
+---
+title: 'Generating Certificates'
+description: Generate host, user, and server certificates for VPN authentication.
+keywords: ['certificate', 'pki', 'issue', 'CSR', 'PKCS#10', 'PKCS#12', 'serverAuth', 'SAN']
+---
+
+End-entity certificates identify VPN gateways and clients during IKEv2 authentication. Each certificate is signed by the CA and bound to a specific distinguished name and optional Subject Alternative Names (SANs).
+
+<Steps>
+  <Step title="Generate the host private key">
+    Create a private key for the host or user. Ed25519 is recommended:
+
+    ```bash
+    pki --gen --type ed25519 --outform pem > moonKey.pem
+    ```
+
+    Alternatively, generate a 3072-bit RSA key in binary DER format:
+
+    ```bash
+    pki --gen --type rsa --size 3072 > moonKey.der
+    ```
+
+    <Info>
+    A TPM 2.0 Trusted Platform Module can store RSA or ECDSA keys in hardware, protecting them from extraction even if the OS is compromised. See the [TPM 2.0 HOWTO](https://docs.strongswan.org/docs/latest/tpm/tpm2.html) for details.
+    </Info>
+  </Step>
+
+  <Step title="Create a certificate signing request">
+    Generate a PKCS#10 CSR containing the subject DN and SANs:
+
+    ```bash
+    pki --req --type priv \
+        --in moonKey.pem \
+        --dn "C=CH, O=strongSwan, CN=moon.strongswan.org" \
+        --san moon.strongswan.org \
+        --outform pem > moonReq.pem
+    ```
+
+    The `--san` option can be repeated to add multiple Subject Alternative Names. The value type is inferred automatically:
+
+    ```bash
+    --san moon.strongswan.org     # Fully qualified hostname
+    --san carol@strongswan.org    # RFC 822 email address
+    --san 192.168.0.1             # IPv4 address
+    --san fec0::1                 # IPv6 address
+    ```
+
+    <Note>
+    Many IKEv2 implementations match peer identity against the SAN, not the CN. Always include the intended identity as a SAN.
+    </Note>
+  </Step>
+
+  <Step title="Issue the signed certificate">
+    Have the CA sign the CSR and produce an end-entity certificate:
+
+    ```bash
+    pki --issue \
+        --cacert strongswanCert.pem --cakey strongswanKey.pem \
+        --type pkcs10 --in moonReq.pem \
+        --serial 01 --lifetime 1826 \
+        --outform pem > moonCert.pem
+    ```
+
+    Key options:
+
+    | Option | Description |
+    |---|---|
+    | `--cacert` | CA certificate file |
+    | `--cakey` | CA private key file |
+    | `--type pkcs10` | Input is a PKCS#10 CSR (use `pub` or `priv` for raw key input) |
+    | `--serial <hex>` | Hexadecimal serial number; random if omitted |
+    | `--lifetime <days>` | Certificate validity in days (1826 = 5 years) |
+
+    Adding the TLS server authentication Extended Key Usage (EKU) — required by Windows, iOS, and macOS VPN clients for gateway certificates:
+
+    ```bash
+    pki --issue ... --flag serverAuth
+    ```
+
+    Available `--flag` values: `serverAuth`, `clientAuth`, `ikeIntermediate`, `crlSign`, `ocspSigning`, `msSmartcardLogon`.
+
+    Adding CRL distribution points so peers can fetch revocation status dynamically:
+
+    ```bash
+    pki --issue ... --crl http://crl.strongswan.org/strongswan.crl
+    pki --issue ... --crl "ldap://ldap.strongswan.org/cn=strongSwan Root CA,o=strongSwan,c=CH?certificateRevocationList"
+    ```
+  </Step>
+
+  <Step title="Inspect the issued certificate">
+    Verify the certificate content before deploying it:
+
+    ```bash
+    pki --print --in moonCert.pem
+    ```
+
+    Expected output:
+
+    ```text
+    subject:  "C=CH, O=strongSwan, CN=moon.strongswan.org"
+    issuer:   "C=CH, O=strongSwan, CN=strongSwan Root CA"
+    validity:  not before May 19 10:28:19 2017, ok
+               not after  May 19 10:28:19 2022, ok (expires in 1825 days)
+    serial:    01
+    altNames:  moon.strongswan.org
+    flags:     serverAuth
+    CRL URIs:  http://crl.strongswan.org/strongswan.crl
+    authkeyId: 2b:95:14:5b:c3:22:87:de:d1:42:91:88:63:b3:d5:c1:92:7a:0f:5d
+    subjkeyId: 60:9d:de:30:a6:ca:b9:8e:87:bb:33:23:61:19:18:b8:c4:7e:23:8f
+    pubkey:    ED25519 256 bits
+    keyid:     39:1b:b3:c2:34:72:1a:01:08:40:ce:97:75:b8:be:ce:24:30:26:29
+    subjkey:   60:9d:de:30:a6:ca:b9:8e:87:bb:33:23:61:19:18:b8:c4:7e:23:8f
+    ```
+
+    Confirm that `authkeyId` matches the CA's `subjkeyId`, that the SAN is present, and that any required EKU flags appear.
+  </Step>
+
+  <Step title="Install credentials on the host">
+    Place files in the correct `swanctl` directories:
+
+    ```bash
+    install -m 644 strongswanCert.pem /etc/swanctl/x509ca/
+    install -m 644 moonCert.pem       /etc/swanctl/x509/
+    install -m 600 moonKey.pem        /etc/swanctl/private/
+    ```
+
+    Reload credentials into the running daemon:
+
+    ```bash
+    swanctl --load-creds
+    ```
+  </Step>
+</Steps>
+
+## Creating a PKCS#12 bundle for clients
+
+Windows, macOS, Android, and iOS clients typically import credentials as a single PKCS#12 (`.p12`) file. The `pki` tool does not create PKCS#12 files directly; use `openssl` instead:
+
+```bash
+openssl pkcs12 -export \
+    -inkey carolKey.pem \
+    -in carolCert.pem -name "carol" \
+    -certfile strongswanCert.pem -caname "strongSwan Root CA" \
+    -out carolCert.p12
+```
+
+The resulting `carolCert.p12` contains the user's private key, certificate, and the CA certificate in a single password-protected file.
+
+<Warning>
+The export password protects the private key inside the bundle. Use a strong password and transmit the `.p12` file over a secure channel (not plain email).
+</Warning>
+
+## Credential file locations summary
+
+| File | Directory | Mode |
+|---|---|---|
+| CA certificate | `/etc/swanctl/x509ca/` | `644` |
+| Host / user certificate | `/etc/swanctl/x509/` | `644` |
+| Private key | `/etc/swanctl/private/` | `600` |
+| PKCS#12 bundle | `/etc/swanctl/pkcs12/` | `600` |

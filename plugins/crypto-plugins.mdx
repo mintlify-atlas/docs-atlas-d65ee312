@@ -1,0 +1,166 @@
+---
+title: "Cryptography Plugins"
+description: "Cryptographic algorithm implementations for IKE and IPsec in strongSwan"
+---
+
+strongSwan's cryptographic subsystem is fully plugin-based. Plugins implement standard interfaces defined in `libstrongswan` and register algorithm providers at startup. When multiple plugins provide the same algorithm, the one with the highest configured priority wins.
+
+This lets you choose between crypto backends (for example, OpenSSL vs. wolfSSL), add hardware acceleration, or meet compliance requirements (for example, FIPS mode via OpenSSL).
+
+## Crypto backend plugins
+
+| Plugin | Primary source | Provides |
+|--------|---------------|----------|
+| `openssl` | OpenSSL / LibreSSL | RSA, ECDSA, EdDSA, DH, ECDH, AES, SHA-1/2/3, ChaCha20-Poly1305, and more |
+| `botan` | Botan library | Modern, header-only C++ crypto; broad algorithm coverage |
+| `wolfssl` | wolfSSL (CyaSSL) | Embedded-focused TLS/crypto library |
+| `gcrypt` | libgcrypt (GnuPG) | GNU crypto library; RSA, DH, AES, SHA |
+| `gmp` | GNU MP | RSA and classic DH (Diffie-Hellman) via big-integer arithmetic |
+| `aesni` | CPU instruction | AES-NI hardware acceleration (x86/x86-64) |
+| `af-alg` | Linux kernel | Offload crypto to kernel via `AF_ALG` socket interface |
+| `rdrand` | CPU instruction | Intel RDRAND hardware random number generator |
+| `padlock` | VIA hardware | VIA Padlock hardware crypto engine |
+
+<Note>
+`openssl` is the most common backend and is recommended for most deployments. It provides the widest algorithm coverage and is required for EAP-MSCHAPv2 (which needs MD4 and DES from OpenSSL's legacy provider).
+</Note>
+
+## Algorithm-specific plugins
+
+These plugins ship implementations of individual algorithms. They are used when no full-featured backend is loaded or when a specific implementation is preferred:
+
+| Plugin | Algorithms |
+|--------|------------|
+| `aes` | AES-128/192/256 (software) |
+| `sha1` | SHA-1 |
+| `sha2` | SHA-256, SHA-384, SHA-512 |
+| `sha3` | SHA-3 (Keccak) |
+| `des` | 3DES (legacy) |
+| `blowfish` | Blowfish (legacy) |
+| `md5` | MD5 |
+| `md4` | MD4 (needed for MSCHAPv2) |
+| `hmac` | HMAC construction |
+| `cmac` | CMAC construction |
+| `xcbc` | XCBC-MAC |
+| `gcm` | GCM AEAD mode |
+| `ccm` | CCM AEAD mode |
+| `ctr` | CTR mode |
+| `chapoly` | ChaCha20-Poly1305 |
+| `curve25519` | X25519 DH and Ed25519 signatures |
+| `fips_prf` | FIPS PRF for EAP-SIM/AKA |
+| `drbg` | NIST SP 800-90A DRBG (HMAC-DRBG) |
+| `nonce` | Nonce generation |
+| `random` | Entropy source (`/dev/urandom`) |
+
+## Post-quantum cryptography
+
+The `ml` plugin implements **ML-KEM** (CRYSTALS-Kyber, FIPS 203) for hybrid key exchange in IKEv2. Combined with a classical Diffie-Hellman group, it provides quantum-resistant key establishment:
+
+```conf swanctl.conf
+connections {
+  example {
+    proposals = aes256gcm16-prfsha384-x25519-ke1_kyber768    # hybrid: X25519 + ML-KEM-768
+    children {
+      net {
+        esp_proposals = aes256gcm16
+      }
+    }
+  }
+}
+```
+
+<Tip>
+The `curve25519` plugin provides both X25519 (ECDH) and Ed25519 (signatures) without depending on OpenSSL.
+</Tip>
+
+## OpenSSL plugin configuration
+
+```conf /etc/strongswan.d/charon/openssl.conf
+plugins {
+  openssl {
+    load = yes
+    # Load legacy provider for MD4/DES (required for EAP-MSCHAPv2)
+    load_legacy = yes
+    # FIPS mode: 0=disabled, 1=enabled, 2=Suite B (pre-3.0)
+    # With OpenSSL 3+, any non-zero value loads the fips and base providers
+    fips_mode = 0
+  }
+}
+```
+
+<Warning>
+With OpenSSL 3+, setting `load_legacy = no` disables MD4 and DES. This breaks EAP-MSCHAPv2. Keep `load_legacy = yes` if you support Windows clients using password authentication.
+</Warning>
+
+## Checking loaded algorithms
+
+To see which algorithms are available from currently loaded plugins:
+
+```bash
+swanctl --list-algs
+```
+
+Example output (truncated):
+
+```
+encryption:
+  AES_CBC[openssl]
+  AES_GCM_16[openssl]
+  CHACHA20_POLY1305[openssl]
+integrity:
+  HMAC_SHA2_256_128[openssl]
+  HMAC_SHA2_512_256[openssl]
+prf:
+  PRF_HMAC_SHA2_256[openssl]
+dh-groups:
+  CURVE_25519[curve25519]
+  ECP_384[openssl]
+  MODP_2048[openssl]
+```
+
+The plugin name in brackets shows which plugin provides each algorithm. If a group you expect (for example, `MODP_4096`) is absent, the providing plugin is not loaded.
+
+## Configuring proposals in swanctl.conf
+
+Algorithm selection in `swanctl.conf` uses proposal strings. Only algorithms available from loaded plugins can be negotiated.
+
+```conf swanctl.conf
+connections {
+  example {
+    # IKE SA algorithms (encryption-integrity-prf-dhgroup)
+    proposals = aes256-sha256-prfsha256-x25519
+
+    children {
+      net {
+        # ESP/CHILD SA algorithms
+        esp_proposals = aes256gcm16-x25519
+      }
+    }
+  }
+}
+```
+
+<Tabs>
+  <Tab title="Modern (recommended)">
+```
+aes256gcm16-prfsha384-x25519        # IKE
+aes256gcm16                          # ESP (no separate integrity needed with AEAD)
+```
+  </Tab>
+  <Tab title="FIPS-compliant">
+```
+aes256-sha384-prfsha384-ecp384      # IKE
+aes256-sha384                        # ESP
+```
+  </Tab>
+  <Tab title="Legacy compatibility">
+```
+aes128-sha1-modp2048                 # IKE
+aes128-sha1                          # ESP
+```
+  </Tab>
+</Tabs>
+
+<Note>
+AEAD algorithms such as `aes256gcm16` and `chacha20poly1305` provide both encryption and integrity. When using an AEAD cipher in ESP proposals, you do not need a separate integrity algorithm.
+</Note>

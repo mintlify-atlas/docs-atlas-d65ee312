@@ -1,0 +1,142 @@
+---
+title: "Connection Management Commands"
+description: "VICI commands for loading, managing, and querying VPN connection configurations."
+---
+
+These commands manage the set of IKE connection definitions known to the charon daemon. Connections loaded over VICI are tracked separately from those loaded by other backends (e.g., `swanctl.conf` files read at startup).
+
+## load-conn
+
+Load a single connection definition into the daemon. If a connection with the same name already exists, it is updated or replaced.
+
+The input message contains a single top-level section whose name is the IKE configuration name. The contents follow the `swanctl.conf(5)` connection format.
+
+**Input**
+
+```
+{
+    <IKE_SA config name> = {
+        # IKE configuration parameters with authentication
+        # and CHILD_SA subsections.
+        # Refer to swanctl.conf(5) for details.
+    }
+}
+```
+
+<ParamField body="<IKE_SA config name>" type="section" required>
+  A section named after the connection. The contents mirror the `connections.<name>` block in `swanctl.conf`. Includes local/remote authentication subsections and `children` subsections for CHILD_SA configurations.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` if the connection was loaded successfully, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description, present only on failure.
+</ResponseField>
+
+**Python example**
+
+```python
+import vici
+from collections import OrderedDict
+
+v = vici.Session()
+v.load_conn({
+    "net-net": OrderedDict([
+        ("remote_addrs", "192.168.0.2"),
+        ("local", OrderedDict([
+            ("auth", "pubkey"),
+            ("certs", ["moonCert.pem"]),
+        ])),
+        ("remote", OrderedDict([
+            ("auth", "pubkey"),
+        ])),
+        ("children", OrderedDict([
+            ("net-net", OrderedDict([
+                ("local_ts", ["10.1.0.0/16"]),
+                ("remote_ts", ["10.2.0.0/16"]),
+            ])),
+        ])),
+    ])
+})
+```
+
+---
+
+## unload-conn
+
+Unload a previously loaded connection definition by name. Only connections loaded over VICI can be unloaded with this command.
+
+**Input**
+
+<ParamField body="name" type="string" required>
+  The IKE configuration name to unload.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="string">
+  `yes` if the connection was unloaded, `no` on failure.
+</ResponseField>
+
+<ResponseField name="errmsg" type="string">
+  Human-readable error description, present only on failure.
+</ResponseField>
+
+**Python example**
+
+```python
+v.unload_conn({"name": "net-net"})
+```
+
+---
+
+## list-conns
+
+List currently loaded connections by streaming `list-conn` events. This includes **all** connections known to the daemon — not only those loaded over VICI.
+
+This is a **streaming command**. Register for the [`list-conn`](/vici/events/sa-events#list-conn) event before issuing this command and unregister after receiving the final empty response.
+
+**Input**
+
+<ParamField body="ike" type="string">
+  Filter results to connections matching this configuration name. Omit to list all connections.
+</ParamField>
+
+**Response**
+
+An empty message (`{}`). All data arrives via `list-conn` events before this response.
+
+**Python example**
+
+```python
+for conn in v.list_conns():
+    for name in conn:
+        print(name)
+```
+
+---
+
+## get-conns
+
+Return a list of connection names that were loaded **exclusively over VICI**. Connections loaded by other backends (such as `swanctl.conf`) are not included.
+
+**Input**
+
+No input parameters.
+
+**Response**
+
+<ResponseField name="conns" type="list">
+  List of connection names loaded via VICI.
+</ResponseField>
+
+**Python example**
+
+```python
+result = v.get_conns()
+print(result[b"conns"])
+```

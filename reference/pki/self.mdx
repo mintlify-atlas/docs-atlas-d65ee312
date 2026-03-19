@@ -1,0 +1,135 @@
+---
+title: "pki --self"
+description: Create a self-signed certificate, typically used for CA certificates.
+sidebarTitle: "--self"
+---
+
+`pki --self` creates a self-signed X.509 certificate from a private key. This is primarily used to create root CA certificates.
+
+## Synopsis
+
+```bash
+pki --self --in <key> --dn <dn> [options]
+```
+
+## Options
+
+<ParamField path="--in" type="string">
+  Path to the input private key file (PEM or DER). If omitted, the key is read from stdin.
+</ParamField>
+
+<ParamField path="--keyid" type="string">
+  Hex-encoded CKA_ID of a private key stored on a token (HSM/smartcard). Use instead of `--in` for hardware-backed keys.
+</ParamField>
+
+<ParamField path="--type" type="string" default="priv">
+  Input type. Accepted values: `priv` (auto-detect), `rsa`, `ecdsa`, `ed25519`, `ed448`, `pub`, `pkcs10`.
+</ParamField>
+
+<ParamField path="--dn" type="string" required>
+  Subject Distinguished Name (DN) in RFC 4514 format, for example:
+  ```
+  "C=CH, O=strongSwan, CN=strongSwan Root CA"
+  ```
+</ParamField>
+
+<ParamField path="--san" type="string">
+  Subject Alternative Name (SAN). Can be specified multiple times. Accepts FQDNs, email addresses, IPv4 and IPv6 addresses, and URIs.
+</ParamField>
+
+<ParamField path="--lifetime" type="number" default="1095">
+  Certificate validity period in days. Defaults to 1095 days (3 years).
+</ParamField>
+
+<ParamField path="--not-before" type="string">
+  Start of certificate validity. Accepts a date string or Unix timestamp. Defaults to the current time.
+</ParamField>
+
+<ParamField path="--not-after" type="string">
+  End of certificate validity. Overrides `--lifetime` if specified.
+</ParamField>
+
+<ParamField path="--serial" type="string">
+  Serial number in hexadecimal. If omitted, a random serial is generated.
+</ParamField>
+
+<ParamField path="--ca" type="boolean">
+  Include the CA basic constraint, marking this as a CA certificate.
+</ParamField>
+
+<ParamField path="--pathlen" type="number">
+  Maximum CA path length constraint. Only meaningful when `--ca` is set.
+</ParamField>
+
+<ParamField path="--flag" type="string">
+  Extended Key Usage (EKU) flag. Can be specified multiple times. Accepted values: `serverAuth`, `clientAuth`, `crlSign`, `ocspSigning`, `ikeIntermediate`, `msSmartcardLogon`.
+</ParamField>
+
+<ParamField path="--ocsp" type="string">
+  OCSP responder URI to embed in the certificate. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="--crl" type="string">
+  CRL Distribution Point URI to embed. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="--digest" type="string">
+  Digest algorithm to use for the signature (e.g. `sha256`, `sha384`, `sha512`). Defaults to a digest appropriate for the key type.
+</ParamField>
+
+<ParamField path="--rsa-padding" type="string">
+  RSA padding scheme. Use `pss` for RSASSA-PSS. Defaults to PKCS#1 v1.5.
+</ParamField>
+
+<ParamField path="--outform" type="string" default="der">
+  Output encoding format. Accepted values: `pem`, `der`.
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write the certificate to the specified file path. If omitted, output goes to stdout.
+</ParamField>
+
+## Examples
+
+Create a self-signed root CA certificate valid for 10 years:
+
+```bash
+pki --self \
+  --ca \
+  --lifetime 3652 \
+  --in strongswanKey.pem \
+  --dn "C=CH, O=strongSwan, CN=strongSwan Root CA" \
+  --outform pem > strongswanCert.pem
+```
+
+Create a self-signed certificate with SANs for a host:
+
+```bash
+pki --self \
+  --in moonKey.pem \
+  --dn "C=CH, O=strongSwan, CN=moon.strongswan.org" \
+  --san moon.strongswan.org \
+  --san 192.168.0.1 \
+  --lifetime 730 \
+  --outform pem > moonCert.pem
+```
+
+Create a CA certificate with an OCSP responder:
+
+```bash
+pki --self \
+  --ca \
+  --lifetime 3652 \
+  --in strongswanKey.pem \
+  --dn "C=CH, O=strongSwan, CN=strongSwan Root CA" \
+  --ocsp http://ocsp.strongswan.org \
+  --outform pem > strongswanCert.pem
+```
+
+<Warning>
+  Self-signed certificates are only appropriate for root CA certificates. For end-entity certificates (VPN gateways, clients), use `pki --issue` instead.
+</Warning>
+
+<Tip>
+  Use `--lifetime 3652` (roughly 10 years) for long-lived root CA certificates. For intermediate CAs, a shorter lifetime of 5 years (`1826` days) is common.
+</Tip>

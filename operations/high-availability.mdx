@@ -1,0 +1,190 @@
+---
+title: "High availability"
+description: "Configure active-passive HA clustering for strongSwan gateway redundancy using the ha plugin."
+---
+
+The `ha` plugin provides active-passive failover for strongSwan gateways. It synchronizes IKE_SA and CHILD_SA state from the active node to a passive standby, so that the standby can take over existing tunnels without requiring clients to renegotiate.
+
+<Warning>
+  The `ha` plugin is experimental. Test thoroughly in a staging environment before deploying to production. Active-active clustering is not supported.
+</Warning>
+
+## Architecture
+
+```
+           clients
+              |
+     virtual IP (VRRP/ucarp)
+        /           \
+  [Active node]   [Passive node]
+  192.168.1.1     192.168.1.2
+        \           /
+        sync link (UDP)
+```
+
+Both nodes share a virtual IP address managed externally — typically by VRRP (`keepalived`) or ucarp. The active node handles all IKE exchanges and sends synchronization messages to the passive node over a dedicated UDP channel. When the active node stops sending heartbeats, the passive node activates its synchronized SAs and begins serving traffic.
+
+<Info>
+  The `ha` plugin handles SA synchronization only. Virtual IP management and failover triggering must be provided by an external tool such as `keepalived` or `ucarp`.
+</Info>
+
+## Requirements
+
+- Both nodes must be reachable from each other on the sync address (layer-2 adjacency recommended, but a routed dedicated sync link also works).
+- Both nodes must have identical `swanctl.conf` connection configurations.
+- The `ha` plugin requires the `CAP_CHOWN` capability at startup to manage its control socket.
+- Kernel IPsec support (`kernel-netlink` plugin on Linux).
+
+## Configuration
+
+Add the `ha` plugin configuration under `charon { plugins { } }` in `strongswan.conf`.
+
+```conf
+charon {
+  plugins {
+    ha {
+      local  = 192.168.1.1   # this node's sync address
+      remote = 192.168.1.2   # peer node's sync address
+      secret = HASecretKey   # shared secret for message authentication
+      fifo_interface = yes   # enable FIFO control interface
+      monitor = yes          # enable heartbeat monitoring
+      resync = yes           # request resync from peer on startup
+      segment_count = 1      # number of HA segments
+      heartbeat_delay = 1000   # ms between heartbeats
+      heartbeat_timeout = 2100 # ms before declaring peer dead
+    }
+  }
+}
+```
+
+### Configuration options
+
+| Option | Default | Description |
+|---|---|---|
+| `local` | — | This node's IP address for the sync channel. **Required.** |
+| `remote` | — | Peer node's IP address for the sync channel. **Required.** |
+| `secret` | — | Shared secret used to authenticate sync messages (HMAC-SHA1). If omitted, messages are unauthenticated. |
+| `fifo_interface` | `yes` | Create a FIFO control interface to manually activate/deactivate segments. |
+| `monitor` | `yes` | Enable heartbeat monitoring to detect peer failure. |
+| `resync` | `yes` | Request full resynchronization from the peer node on plugin startup. |
+| `segment_count` | `1` | Number of HA segments (maximum 16). Segments allow splitting SA ownership between nodes. |
+| `heartbeat_delay` | `1000` | Interval in milliseconds between heartbeat messages. |
+| `heartbeat_timeout` | `2100` | Milliseconds without a heartbeat before the peer is considered failed. |
+| `autobalance` | `0` | Interval in seconds to automatically rebalance segments. `0` disables. |
+| `buflen` | `2048` | Buffer size for received HA messages in bytes. Increase for large DH groups (e.g. `modp4096`). |
+
+## Setting up a two-node cluster
+
+<Steps>
+  <Step title="Configure both nodes identically">
+    Deploy the same `swanctl.conf` connection definitions on both nodes. The HA plugin syncs SA state, not configuration — both nodes must know about all connections.
+  </Step>
+
+  <Step title="Configure the ha plugin on each node">
+    On node 1 (`192.168.1.1`):
+
+    ```conf
+    charon {
+      plugins {
+        ha {
+          local  = 192.168.1.1
+          remote = 192.168.1.2
+          secret = SharedHASecret
+          monitor = yes
+          resync = yes
+        }
+      }
+    }
+    ```
+
+    On node 2 (`192.168.1.2`), swap `local` and `remote`:
+
+    ```conf
+    charon {
+      plugins {
+        ha {
+          local  = 192.168.1.2
+          remote = 192.168.1.1
+          secret = SharedHASecret
+          monitor = yes
+          resync = yes
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Configure the virtual IP with keepalived">
+    Install `keepalived` on both nodes and configure VRRP to manage the shared virtual IP. The virtual IP should be the address clients and peers connect to.
+
+    ```conf
+    # /etc/keepalived/keepalived.conf (node 1 — higher priority = preferred active)
+    vrrp_instance VPN_VIP {
+      state MASTER
+      interface eth0
+      virtual_router_id 51
+      priority 100
+      advert_int 1
+      virtual_ipaddress {
+        203.0.113.100/24
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Start the daemons">
+    Start strongSwan on the passive node first, then on the active node. The active node will push its SA state to the passive node automatically if `resync = yes`.
+
+    ```bash
+    # On both nodes
+    systemctl start strongswan
+    systemctl start keepalived
+    ```
+  </Step>
+
+  <Step title="Verify synchronization">
+    On the active node, check that tunnels are established:
+
+    ```bash
+    swanctl --list-sas
+    ```
+
+    On the passive node, the same SA entries should be present in a synchronized (but not locally active) state. Use `swanctl --stats` on both nodes to check daemon health.
+  </Step>
+</Steps>
+
+## How SA synchronization works
+
+The ha plugin hooks into charon's event bus via three listeners:
+
+- **`ha_ike`** — listens for IKE_SA events (establish, rekey, delete) and serializes state into sync messages.
+- **`ha_child`** — listens for CHILD_SA events and sends kernel SA parameters (SPIs, keys, traffic selectors) to the peer.
+- **`ha_segments`** — tracks which node is active for each segment and handles heartbeat exchange.
+
+Sync messages are sent over a UDP socket bound to the `local` address and directed to the `remote` address. When a `secret` is configured, messages are protected by HMAC-SHA1 to prevent injection of forged SA state.
+
+## Segment-based load distribution
+
+With `segment_count > 1`, you can distribute SA ownership across segments. Each IKE_SA is hashed into a segment. You can manually activate or deactivate segments via the FIFO interface (`fifo_interface = yes`) at `/var/run/charon.ha`:
+
+```bash
+# Activate segment 2 on this node
+echo "+ 2" > /var/run/charon.ha
+
+# Deactivate segment 2
+echo "- 2" > /var/run/charon.ha
+```
+
+With `autobalance` set to a non-zero interval, the plugin periodically redistributes segments to equalize load between nodes.
+
+## Limitations
+
+<Warning>
+  Be aware of these constraints before deploying the ha plugin:
+</Warning>
+
+- **Active-passive only.** Both nodes cannot process IKE traffic simultaneously. There is no active-active clustering mode.
+- **No built-in VIP management.** You must use an external tool (keepalived, ucarp, or custom scripting) to move the virtual IP on failover.
+- **IKEv1 sync messages are larger.** IKEv1 sync includes DH public factors; increase `buflen` if using `modp4096` or larger groups.
+- **In-flight exchanges are lost.** If the active node fails mid-handshake, clients must retry. Only completed SAs are synced.
+- **Same plugin version required.** Both nodes must run the same strongSwan version to ensure sync message compatibility.

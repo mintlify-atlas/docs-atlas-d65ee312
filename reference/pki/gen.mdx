@@ -1,0 +1,89 @@
+---
+title: "pki --gen"
+description: Generate a private key for use in PKI operations.
+sidebarTitle: "--gen"
+---
+
+`pki --gen` generates a new private key. The key is written in DER format by default, or PEM format when `--outform pem` is specified.
+
+## Synopsis
+
+```bash
+pki --gen [--type <type>] [--size <bits>] [--safe-primes] [--shares <n>] [--threshold <t>] [--outform <format>] [--out <file>]
+```
+
+## Options
+
+<ParamField path="--type" type="string" default="rsa">
+  Key type to generate. Accepted values:
+  - `rsa` — RSA key (default)
+  - `ecdsa` — ECDSA key
+  - `ed25519` — Ed25519 key (Edwards-curve DSA, 256-bit)
+  - `ed448` — Ed448 key (Edwards-curve DSA, 448-bit)
+</ParamField>
+
+<ParamField path="--size" type="number">
+  Key size in bits. Applies to RSA and ECDSA only; Ed25519 and Ed448 have fixed key sizes.
+
+  Default sizes when omitted:
+  - RSA: `2048`
+  - ECDSA: `256`
+
+  Common values:
+  - RSA: `2048`, `3072`, `4096`
+  - ECDSA: `256`, `384`, `521`
+</ParamField>
+
+<ParamField path="--safe-primes" type="boolean">
+  Generate RSA key using safe primes. This increases generation time significantly but may be required for certain compliance scenarios.
+</ParamField>
+
+<ParamField path="--shares" type="number">
+  Number of key shares to split the private key into (threshold secret sharing). Must be 2 or greater. Used together with `--threshold`.
+</ParamField>
+
+<ParamField path="--threshold" type="number" default="1">
+  Minimum number of shares required to reconstruct the private key. Must be at least 1 and no greater than `--shares`.
+</ParamField>
+
+<ParamField path="--outform" type="string" default="der">
+  Output encoding format. Accepted values: `pem`, `der`.
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write the key to the specified file path. If omitted, the key is written to stdout.
+</ParamField>
+
+## Examples
+
+Generate an Ed25519 key (recommended for new deployments):
+
+```bash
+pki --gen --type ed25519 --outform pem > moonKey.pem
+```
+
+Generate a 3072-bit RSA key:
+
+```bash
+pki --gen --type rsa --size 3072 --outform pem > moonKey.pem
+```
+
+Generate a 384-bit ECDSA key:
+
+```bash
+pki --gen --type ecdsa --size 384 --outform pem > moonKey.pem
+```
+
+Generate a key and write it directly to a file:
+
+```bash
+pki --gen --type rsa --size 4096 --outform pem --out strongswanKey.pem
+```
+
+<Tip>
+  Ed25519 and Ed448 keys do not require a `--size` argument. They are fixed-length by design and generally offer better performance than RSA at equivalent security levels.
+</Tip>
+
+<Note>
+  The key is written in DER (binary) format by default. Use `--outform pem` when the key will be stored in a file or referenced by `swanctl.conf`.
+</Note>

@@ -1,0 +1,197 @@
+---
+title: "Android VPN Client"
+description: strongSwan Android app and charon-based VPN client for mobile devices
+keywords: ["android", "vpn", "charon-android", "ikev2", "eap", "mobile", "vpnservice", "jni", "kernel-libipsec"]
+---
+
+strongSwan provides an official Android VPN application that brings the full IKEv2 feature set to Android devices. The app runs the charon daemon in-process using JNI and implements user-space IPsec via the Android `VpnService` API, without requiring root access.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────┐
+│           Android Application             │
+│                                           │
+│   Java/Kotlin UI ─── JNI ─── charon      │
+│                               │           │
+│                         kernel-libipsec   │
+│                         (user-space ESP)  │
+│                               │           │
+│                          TUN device       │
+│                        (VpnService API)   │
+└──────────────────────────────────────────┘
+```
+
+The key difference from a desktop strongSwan installation is the kernel backend:
+
+| Component | Desktop (Linux) | Android app |
+|---|---|---|
+| Kernel backend | `kernel-netlink` (XFRM) | `kernel-libipsec` (user-space) |
+| Network interface | Kernel IPsec SA | TUN device via `VpnService` |
+| Root required | Yes | No |
+| ESP processing | Kernel | User space (charon) |
+
+The `kernel-libipsec` plugin implements ESP encryption and decryption entirely in user space and routes traffic through a TUN device obtained from the Android `VpnService` API. This avoids the need for kernel IPsec support or root privileges.
+
+## Supported connection types
+
+| Auth method | Description |
+|---|---|
+| IKEv2 with certificate | Client authenticates with an X.509 certificate |
+| IKEv2 with EAP-MSCHAPv2 | Username and password (widely supported) |
+| IKEv2 with EAP-TLS | Certificate-based EAP (mutual TLS) |
+| IKEv2 with PSK | Pre-shared key authentication |
+
+<Info>
+  IKEv1 is not supported in the Android app. All connections use IKEv2.
+</Info>
+
+## Server configuration for Android clients
+
+The following requirements apply to the VPN gateway when serving Android clients:
+
+- The server certificate's SubjectAltName must match the server's IP address or FQDN as configured in the Android app
+- The server certificate must include the `serverAuth` Extended Key Usage (EKU) flag
+- A virtual IP pool must be configured so the client receives a tunnel address (`vips = 0.0.0.0` on the gateway accepts any requested virtual IP)
+- Set `send_certreq = no` to avoid requesting a client certificate when using EAP
+
+### Example: gateway for Android EAP-MSCHAPv2 clients
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+  android-clients {
+    local {
+      auth = pubkey
+      certs = serverCert.pem
+      id = vpn.example.com
+    }
+    remote {
+      auth = eap-mschapv2
+      eap_id = %any
+    }
+    children {
+      android {
+        local_ts = 10.0.0.0/8
+      }
+    }
+    pools = android_pool
+    send_certreq = no
+  }
+}
+
+pools {
+  android_pool {
+    addrs = 10.10.1.0/24
+  }
+}
+
+secrets {
+  eap-alice {
+    id = alice
+    secret = "correct horse battery staple"
+  }
+}
+```
+
+<Warning>
+  The server certificate's CN or SubjectAltName must exactly match the hostname or IP address the Android app is configured to connect to. A mismatch causes IKEv2 authentication to fail with an identity verification error.
+</Warning>
+
+### Example: gateway for Android certificate clients
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+  android-cert {
+    local {
+      auth = pubkey
+      certs = serverCert.pem
+      id = vpn.example.com
+    }
+    remote {
+      auth = pubkey
+    }
+    children {
+      android {
+        local_ts = 0.0.0.0/0
+      }
+    }
+    pools = android_pool
+  }
+}
+
+pools {
+  android_pool {
+    addrs = 10.10.1.0/24
+  }
+}
+```
+
+## Installing the app
+
+The strongSwan Android app is available on the **Google Play Store** (search for "strongSwan") and as an APK from the [strongSwan download page](https://www.strongswan.org/download.html).
+
+The Play Store version is signed by the strongSwan project. The APK build includes the same charon source code as the Linux daemon.
+
+## Configuring a connection in the app
+
+<Steps>
+  <Step title="Add a VPN profile">
+    Open the strongSwan app and tap **Add VPN Profile**.
+  </Step>
+
+  <Step title="Enter server details">
+    Set **Server** to the gateway's hostname or IP address. This must match the server certificate's SubjectAltName.
+  </Step>
+
+  <Step title="Select VPN type">
+    Choose the authentication type that matches your server configuration:
+
+    - **IKEv2 Certificate** — select a client certificate from the Android keystore
+    - **IKEv2 EAP (Username/Password)** — enter username and password
+    - **IKEv2 EAP-TLS** — select a client certificate used within EAP-TLS
+    - **IKEv2 RSA** — legacy option; use IKEv2 Certificate instead
+  </Step>
+
+  <Step title="Import certificates">
+    For certificate-based auth, import the CA certificate (and client certificate if needed) into the Android certificate store or the app's own certificate store.
+  </Step>
+
+  <Step title="Save and connect">
+    Save the profile and tap it to connect. The app requests VPN permission from Android on first use.
+  </Step>
+</Steps>
+
+## Building from source
+
+The Android frontend lives in `src/frontends/android/` in the strongSwan source tree. Building requires:
+
+- Android NDK (tested with recent LTS versions)
+- OpenSSL source (1.1.1 or 3.x) for `libcrypto`
+- Gradle (included via the Gradle wrapper in the repository)
+
+```bash
+# 1. Prepare the strongSwan autoconf tree
+./autogen.sh && ./configure && make && make distclean
+
+# 2. Build OpenSSL's libcrypto for all Android ABIs
+export ANDROID_NDK_ROOT=~/android-ndk-r26
+export OPENSSL_SRC=~/openssl-3.x
+src/frontends/android/openssl/build.sh
+
+# 3. Build the APK with Gradle
+./gradlew assembleRelease
+```
+
+The `build.sh` script uses Docker by default. Set `NO_DOCKER=1` to build with locally installed tools instead. Alternatively, set the `ABIS` environment variable to a space-separated list of target ABIs (e.g., `arm64-v8a x86_64`) to skip ABI auto-detection with `jq`.
+
+<Note>
+  The strongSwan sources must be prepared with `autogen.sh` and `configure` before the Android NDK build, because the JNI build references generated headers from the autoconf step.
+</Note>
+
+## Network Manager integration (desktop Linux)
+
+For GNOME desktop users, the `charon-nm` variant provides NetworkManager integration. The `nm-strongswan` plugin appears in NetworkManager's VPN list and uses the same charon IKE engine. This is separate from the Android app and lives in `src/charon-nm/`.

@@ -1,0 +1,117 @@
+---
+title: "pki --req"
+description: Create a PKCS#10 certificate signing request.
+sidebarTitle: "--req"
+---
+
+`pki --req` creates a PKCS#10 Certificate Signing Request (CSR) from a private key. The CSR can then be submitted to a CA using `pki --issue`.
+
+## Synopsis
+
+```bash
+pki --req --in <key> --dn <dn> [options]
+```
+
+## Options
+
+<ParamField path="--in" type="string">
+  Path to the private key file (PEM or DER). Read from stdin if omitted.
+</ParamField>
+
+<ParamField path="--keyid" type="string">
+  Hex-encoded CKA_ID of a private key on a token. Use instead of `--in` for HSM/smartcard-backed keys.
+</ParamField>
+
+<ParamField path="--type" type="string" default="priv">
+  Input key type. Accepted values: `priv` (auto-detect), `rsa`, `ecdsa`.
+</ParamField>
+
+<ParamField path="--dn" type="string" required>
+  Subject Distinguished Name in RFC 4514 format, for example:
+  ```
+  "C=CH, O=strongSwan, CN=moon.strongswan.org"
+  ```
+</ParamField>
+
+<ParamField path="--san" type="string">
+  Subject Alternative Name. Can be specified multiple times.
+
+  | Format | Example |
+  |---|---|
+  | FQDN | `moon.strongswan.org` |
+  | Email | `carol@strongswan.org` |
+  | IPv4 address | `192.168.0.1` |
+  | IPv6 address | `fec0::1` |
+</ParamField>
+
+<ParamField path="--flag" type="string">
+  Extended Key Usage flag to include in the CSR. Can be specified multiple times. Accepted values: `serverAuth`, `clientAuth`, `ocspSigning`, `msSmartcardLogon`.
+</ParamField>
+
+<ParamField path="--digest" type="string">
+  Digest algorithm for the CSR signature (e.g. `sha256`, `sha384`, `sha512`). Defaults to an algorithm appropriate for the key type.
+</ParamField>
+
+<ParamField path="--rsa-padding" type="string">
+  RSA padding scheme. Use `pss` for RSASSA-PSS.
+</ParamField>
+
+<ParamField path="--profile" type="string">
+  Certificate profile to request. Passed as an extension in the CSR.
+</ParamField>
+
+<ParamField path="--req" type="string">
+  Path to a previous CSR to use as input. Extracts the public key from the existing request.
+</ParamField>
+
+<ParamField path="--outform" type="string" default="der">
+  Output encoding format. Accepted values: `pem`, `der`.
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write the CSR to the specified file path. If omitted, output goes to stdout.
+</ParamField>
+
+## Examples
+
+Create a CSR for a VPN gateway:
+
+```bash
+pki --req \
+  --type priv \
+  --in moonKey.pem \
+  --dn "C=CH, O=strongSwan, CN=moon.strongswan.org" \
+  --san moon.strongswan.org \
+  --outform pem > moonReq.pem
+```
+
+Create a CSR for a VPN client with an email SAN:
+
+```bash
+pki --req \
+  --type priv \
+  --in carolKey.pem \
+  --dn "C=CH, O=strongSwan, CN=carol@strongswan.org" \
+  --san carol@strongswan.org \
+  --outform pem > carolReq.pem
+```
+
+Create a CSR with an EKU flag:
+
+```bash
+pki --req \
+  --type priv \
+  --in moonKey.pem \
+  --dn "C=CH, O=strongSwan, CN=moon.strongswan.org" \
+  --san moon.strongswan.org \
+  --flag serverAuth \
+  --outform pem > moonReq.pem
+```
+
+<Info>
+  The CSR contains the subject's DN, SANs, and public key, signed by the subject's private key to prove possession. The CA may override the DN and SANs when issuing the certificate.
+</Info>
+
+<Note>
+  Pass the resulting CSR to `pki --issue --type pkcs10 --in moonReq.pem` to sign it with a CA.
+</Note>

@@ -1,0 +1,229 @@
+---
+title: "strongswan.conf"
+description: "Configure the charon daemon, plugins, and global settings"
+---
+
+`strongswan.conf` is the global configuration file for the strongSwan daemon. It controls the behavior of `charon`, configures logging, and sets per-plugin options.
+
+**File location:** `/etc/strongswan.conf`
+
+<Tip>
+  The default `strongswan.conf` uses `load_modular = yes` and includes plugin configs from `strongswan.d/charon/*.conf`. This keeps the main file minimal and lets packages manage their own plugin settings.
+</Tip>
+
+---
+
+## charon section
+
+The `charon` section configures the IKE daemon. All options also apply to `charon-cmd` and other charon-based binaries by using their respective section name.
+
+### Core options
+
+| Option | Default | Description |
+|---|---|---|
+| `load_modular` | `no` | Determine which plugins to load via each plugin's `load` option instead of a single list |
+| `threads` | `16` | Number of worker threads. Several are reserved for internal tasks, so avoid setting this too low |
+| `install_routes` | `yes` | Install routes into a separate routing table for established IPsec tunnels |
+| `install_virtual_ip` | `yes` | Install virtual IP addresses on the local system |
+| `install_virtual_ip_on` | | Interface name for virtual IP installation. Defaults to the outbound interface |
+| `cache_crls` | `no` | Save fetched CRLs to `/etc/swanctl/x509crl/` for reuse across restarts |
+| `reuse_ikesa` | `yes` | Initiate new CHILD_SAs within existing IKE_SAs when possible |
+| `send_vendor_id` | `no` | Include the strongSwan vendor ID payload in IKE exchanges |
+| `make_before_break` | `yes` | Use make-before-break reauthentication to minimize connectivity gaps |
+| `port` | `500` | Local UDP port for IKE. `0` allocates a random port |
+| `port_nat_t` | `4500` | Local UDP port for NAT-T. Must differ from `port` |
+| `mobike` | (from conn) | Global MOBIKE default |
+| `dpd_delay` | (from conn) | Global DPD default |
+
+### DPD and retransmission
+
+| Option | Default | Description |
+|---|---|---|
+| `retransmit_tries` | `5` | Number of retransmission attempts before giving up |
+| `retransmit_timeout` | `4.0` | Seconds before sending the first retransmit |
+| `retransmit_base` | `1.8` | Exponential back-off base for retransmission intervals |
+| `retransmit_jitter` | `0` | Maximum jitter percentage applied to retransmission timeouts |
+| `half_open_timeout` | `30` | Seconds before an unfinished IKE_SA is discarded |
+
+### DoS protection
+
+| Option | Default | Description |
+|---|---|---|
+| `dos_protection` | `yes` | Enable cookie-based DoS protection |
+| `cookie_threshold` | `30` | Number of half-open IKE_SAs that activate the cookie mechanism |
+| `block_threshold` | `5` | Maximum half-open IKE_SAs per peer IP before blocking |
+| `ikesa_limit` | `0` | Maximum total concurrent IKE_SAs. `0` means unlimited |
+
+### Plugin loading
+
+```text strongswan.conf
+charon {
+    load_modular = yes
+    plugins {
+        include strongswan.d/charon/*.conf
+    }
+}
+
+include strongswan.d/*.conf
+```
+
+When `load_modular = yes`, each plugin's config file in `strongswan.d/charon/` contains a `load` option. Set it to `yes`, `no`, or a numeric priority.
+
+```text strongswan.d/charon/openssl.conf
+plugins {
+    openssl {
+        load = yes
+    }
+}
+```
+
+---
+
+## charon-systemd section
+
+When running strongSwan under systemd, use `charon-systemd` in place of `charon` in `strongswan.conf`. It adds a native systemd journal logger.
+
+```text strongswan.conf (systemd)
+charon-systemd {
+    journal {
+        default = 1
+        ike     = 2
+        cfg     = 2
+    }
+}
+```
+
+The `journal` section accepts the same subsystem/level syntax as other loggers (see [Logging configuration](#logging-configuration) below).
+
+---
+
+## Logging configuration
+
+strongSwan supports three logger backends: file, syslog, and (with systemd) the journal. All are configured inside the `charon` section.
+
+### Log levels
+
+| Level | Meaning |
+|---|---|
+| `-1` | Silent — no output |
+| `0` | Errors only |
+| `1` | Basic informational messages (default) |
+| `2` | More verbose informational messages |
+| `3` | Debug output |
+| `4` | Full debug with raw data |
+
+### Log subsystems
+
+Common subsystem identifiers:
+
+| Subsystem | Area |
+|---|---|
+| `dmn` | Daemon core |
+| `mgr` | IKE_SA manager |
+| `ike` | IKE exchanges |
+| `chd` | CHILD_SA |
+| `job` | Job processing |
+| `cfg` | Configuration backend |
+| `knl` | Kernel interface |
+| `net` | Network socket |
+| `enc` | Encoding/decoding |
+| `tls` | TLS |
+| `esp` | ESP/AH |
+| `lib` | libstrongswan |
+
+### File logger
+
+```text strongswan.conf
+charon {
+    filelog {
+        /var/log/charon.log {
+            default     = 1
+            ike         = 2
+            time_format = %b %e %T
+            append      = yes
+            flush_line  = yes
+        }
+        stderr {
+            default = 0
+        }
+    }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `default` | `1` | Default log level for subsystems not explicitly configured |
+| `<subsystem>` | `default` | Log level for a specific subsystem |
+| `append` | `yes` | Append to existing log file instead of truncating |
+| `flush_line` | `no` | Flush after each line (disables block buffering) |
+| `time_format` | | `strftime(3)` format string for timestamps |
+| `ike_name` | `no` | Prefix each entry with the IKE_SA name and unique ID |
+
+### Syslog logger
+
+```text strongswan.conf
+charon {
+    syslog {
+        identifier = charon
+        daemon {
+            default = 1
+            ike     = 2
+        }
+        auth {
+            default = 0
+            ike     = 1
+        }
+    }
+}
+```
+
+Supported facilities: `daemon`, `auth`, `authpriv`, `user`, `kern`, `lpr`, `mail`, `news`, `syslog`, `uucp`, and `local0`–`local7`.
+
+| Option | Default | Description |
+|---|---|---|
+| `default` | `1` | Default log level |
+| `ike_name` | `no` | Prefix each entry with the IKE_SA name and ID |
+| `map_level` | `-1` | Map strongSwan levels to syslog priorities. `-1` sends everything as `LOG_INFO` |
+
+---
+
+## Complete example
+
+```text strongswan.conf
+charon {
+    load_modular = yes
+    threads      = 16
+
+    install_routes     = yes
+    install_virtual_ip = yes
+    cache_crls         = yes
+    send_vendor_id     = yes
+    reuse_ikesa        = no
+
+    plugins {
+        include strongswan.d/charon/*.conf
+    }
+
+    filelog {
+        /var/log/charon.log {
+            default     = 1
+            ike         = 2
+            knl         = 2
+            time_format = %Y-%m-%d %T
+            append      = yes
+            flush_line  = yes
+        }
+        stderr {
+            default = 0
+        }
+    }
+
+    syslog {
+        daemon {
+            default = 1
+        }
+    }
+}
+
+include strongswan.d/*.conf
+```

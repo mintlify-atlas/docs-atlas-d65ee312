@@ -1,0 +1,303 @@
+---
+title: "EAP Authentication"
+description: "Authenticate clients using Extensible Authentication Protocol methods"
+---
+
+The Extensible Authentication Protocol (EAP) is an IKEv2 authentication framework that supports a wide variety of credential types — passwords, certificates, SIM cards, and more. In strongSwan, EAP is used exclusively for IKEv2; for IKEv1 use [XAuth](/authentication/xauth) instead.
+
+In a typical road-warrior deployment, the gateway authenticates itself with a certificate and the client authenticates via EAP, providing a username/password experience familiar to end users.
+
+## Supported EAP Methods
+
+| Method | Plugin | Description |
+|---|---|---|
+| EAP-MD5 | `eap-md5` | Challenge-response using MD5 hash; server-only auth |
+| EAP-MSCHAPv2 | `eap-mschapv2` | Microsoft CHAP v2; mutual auth, generates MSK |
+| EAP-TLS | `eap-tls` | Certificate-based EAP; mutual authentication |
+| EAP-TTLS | `eap-ttls` | TLS tunnel carrying an inner EAP or PAP/CHAP method |
+| EAP-PEAP | `eap-peap` | Protected EAP; TLS tunnel with inner EAP-MSCHAPv2 |
+| EAP-RADIUS | `eap-radius` | Proxy EAP to an external RADIUS server |
+| EAP-SIM | `eap-sim` | SIM card-based authentication (GSM) |
+| EAP-AKA | `eap-aka` | 3G/4G USIM card-based authentication |
+| EAP-GTC | `eap-gtc` | Generic Token Card (one-time passwords) |
+
+<Note>
+EAP-MD5 does not produce a Master Session Key (MSK) and is not mutual — it only authenticates the client to the server. Use EAP-MSCHAPv2, EAP-TTLS, or EAP-PEAP for stronger password-based authentication.
+</Note>
+
+## Gateway Configuration
+
+The gateway authenticates itself with a certificate and requires the client to use EAP:
+
+```ini
+# /etc/swanctl/swanctl.conf
+connections {
+  eap-server {
+    local_addrs  = 203.0.113.1
+    remote_addrs = %any
+
+    local {
+      auth  = pubkey
+      certs = serverCert.pem
+      id    = vpn.example.org
+    }
+
+    remote {
+      auth   = eap-mschapv2
+      # Optionally request EAP-Identity from the client
+      eap_id = %any
+    }
+
+    vips = 0.0.0.0
+
+    children {
+      rw {
+        local_ts  = 0.0.0.0/0
+        remote_ts = dynamic
+      }
+    }
+  }
+}
+
+secrets {
+  eap-alice {
+    id     = alice
+    secret = "AlicePassword!"
+  }
+  eap-bob {
+    id     = bob
+    secret = "BobPassword!"
+  }
+}
+```
+
+## Client Configuration
+
+The client authenticates itself with EAP and verifies the gateway's certificate:
+
+```ini
+connections {
+  eap-client {
+    local_addrs  = %any
+    remote_addrs = 203.0.113.1
+
+    local {
+      auth   = eap-mschapv2
+      eap_id = alice
+    }
+
+    remote {
+      auth    = pubkey
+      cacerts = trustedCA.pem
+      id      = vpn.example.org
+    }
+
+    vips = 0.0.0.0
+
+    children {
+      rw {
+        remote_ts = 0.0.0.0/0
+      }
+    }
+  }
+}
+
+secrets {
+  eap-alice {
+    id     = alice
+    secret = "AlicePassword!"
+  }
+}
+```
+
+## EAP Identity vs IKEv2 Identity
+
+EAP uses two distinct identities:
+
+| Identity | Config Key | Purpose |
+|---|---|---|
+| IKEv2 identity | `local { id }` | Used in IKE_AUTH; can differ from EAP identity |
+| EAP identity | `local { eap_id }` | Sent in the EAP-Identity response; used for credential lookup |
+| AAA server identity | `local { aaa_id }` | Expected server identity in EAP-TLS/TTLS/PEAP inner exchange |
+
+When the gateway requests an EAP identity (`remote { eap_id = %any }`), the client sends its `eap_id` value. This EAP identity is then used to look up EAP credentials and enforce the uniqueness policy.
+
+```ini
+# Client sending a different EAP identity than IKE identity
+local {
+  auth   = eap
+  id     = client.example.org  # IKEv2 identity (in certificate or as IDi)
+  eap_id = alice@company.com   # EAP identity used for credential lookup
+}
+```
+
+## EAP-MD5 Example
+
+EAP-MD5 is a simple challenge-response method. The server sends a 16-byte random challenge; the client replies with `MD5(identifier | secret | challenge)`.
+
+```ini
+# Gateway
+remote {
+  auth   = eap-md5
+  eap_id = %any
+}
+
+# Client
+local {
+  auth   = eap-md5
+  eap_id = testuser
+}
+
+secrets {
+  eap-testuser {
+    id     = testuser
+    secret = "md5-password"
+  }
+}
+```
+
+## EAP-MSCHAPv2 Example
+
+EAP-MSCHAPv2 provides mutual authentication and generates an MSK for IKEv2 key derivation. It supports NTLM-hashed secrets stored separately from plain-text secrets:
+
+```ini
+secrets {
+  # Plain-text password (hashed internally)
+  eap-alice {
+    id     = alice
+    secret = "AlicePassword"
+  }
+
+  # Pre-computed NT Hash: MD4(UTF-16LE(password))
+  ntlm-bob {
+    id     = bob
+    secret = 0x8846f7eaee8fb117ad06bdd830b7586c
+  }
+}
+```
+
+## Combining Certificate + EAP (Two-Round Auth)
+
+RFC 4739 Multiple Authentication allows the client to authenticate with both a certificate and EAP in a single IKE session:
+
+```ini
+connections {
+  dual-auth {
+    local {
+      auth  = pubkey
+      certs = serverCert.pem
+    }
+    local2 {
+      auth   = eap-mschapv2
+      eap_id = %any
+    }
+
+    remote {
+      # First round: client certificate
+      auth    = pubkey
+      cacerts = clientCA.pem
+    }
+    remote2 {
+      # Second round: EAP password
+      auth = eap-mschapv2
+    }
+  }
+}
+```
+
+## EAP-RADIUS
+
+The `eap-radius` plugin proxies EAP conversations to an external RADIUS server, enabling integration with existing AAA infrastructure (Active Directory, FreeRADIUS, etc.) without storing credentials locally.
+
+### How It Works
+
+strongSwan acts as a RADIUS NAS (Network Access Server). EAP packets received from the IKE client are wrapped in RADIUS Access-Request messages and forwarded to the RADIUS server. The server's Access-Accept or Access-Reject is translated back into IKE EAP success/failure.
+
+### swanctl.conf
+
+The connection config remains the same — just use the desired EAP method in `remote { auth }` as the RADIUS server handles the actual credential check:
+
+```ini
+remote {
+  auth   = eap-radius
+  eap_id = %any
+}
+```
+
+### strongswan.conf
+
+Configure the RADIUS server in `strongswan.conf`:
+
+<Tabs>
+  <Tab title="Single Server">
+    ```ini
+    # /etc/strongswan.conf
+    charon {
+      plugins {
+        eap-radius {
+          server         = radius.example.org
+          secret         = sharedRADIUSsecret
+          port           = 1812  # default auth port
+          nas_identifier = strongSwan-VPN
+          sockets        = 1
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Multiple Servers">
+    ```ini
+    # /etc/strongswan.conf
+    charon {
+      plugins {
+        eap-radius {
+          servers {
+            primary {
+              address        = radius1.example.org
+              secret         = sharedSecret1
+              auth_port      = 1812
+              acct_port      = 1813
+              nas_identifier = strongSwan-VPN
+              preference     = 10
+            }
+            secondary {
+              address        = radius2.example.org
+              secret         = sharedSecret2
+              auth_port      = 1812
+              acct_port      = 1813
+              preference     = 5
+            }
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+The `eap-radius` plugin also registers an XAuth backend named `radius`, allowing RADIUS-based authentication for IKEv1 XAuth connections.
+</Note>
+
+### RADIUS Accounting
+
+The plugin supports RADIUS accounting (RFC 2866). Accounting Start/Stop packets are sent to the RADIUS server's accounting port (default: 1813) as IKE_SAs are established and torn down.
+
+### Dynamic Authorization (DAE)
+
+The plugin supports RADIUS Dynamic Authorization Extensions (RFC 5176), allowing the RADIUS server to send Disconnect-Requests or CoA-Requests to terminate or modify active sessions:
+
+```ini
+charon {
+  plugins {
+    eap-radius {
+      dae {
+        enable = yes
+        listen = 0.0.0.0
+        port   = 3799
+        secret = daeSecret
+      }
+    }
+  }
+}
+```

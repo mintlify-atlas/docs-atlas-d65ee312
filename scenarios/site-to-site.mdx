@@ -1,0 +1,142 @@
+---
+title: "Site-to-Site VPN"
+description: Connect two networks through an encrypted IPsec tunnel between two security gateways
+keywords: ["site-to-site", "vpn", "ipsec", "swanctl", "gateway", "subnet"]
+---
+
+In this scenario two security gateways **moon** and **sun** connect two private subnets through an IPsec tunnel. All traffic between the subnets is encrypted end-to-end.
+
+## Network topology
+
+```text
+10.1.0.0/16 -- | 192.168.0.1 | === | 192.168.0.2 | -- 10.2.0.0/16
+  moon-net          moon                 sun           sun-net
+```
+
+Gateway **moon** (`192.168.0.1`) protects `10.1.0.0/16`. Gateway **sun** (`192.168.0.2`) protects `10.2.0.0/16`. The `===` link represents the encrypted IPsec tunnel over the public network.
+
+## Certificate files
+
+Place the following files on each gateway before loading credentials:
+
+<Tabs>
+  <Tab title="moon">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/moonCert.pem
+    /etc/swanctl/private/moonKey.pem
+    ```
+  </Tab>
+  <Tab title="sun">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/sunCert.pem
+    /etc/swanctl/private/sunKey.pem
+    ```
+  </Tab>
+</Tabs>
+
+The CA certificate `strongswanCert.pem` must be present on both gateways so each peer can authenticate the other.
+
+## Configuration
+
+<Tabs>
+  <Tab title="moon (192.168.0.1)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        net-net {
+            remote_addrs = 192.168.0.2
+
+            local {
+                auth = pubkey
+                certs = moonCert.pem
+            }
+            remote {
+                auth = pubkey
+                id = "C=CH, O=strongSwan, CN=sun.strongswan.org"
+            }
+            children {
+                net-net {
+                    local_ts  = 10.1.0.0/16
+                    remote_ts = 10.2.0.0/16
+                    start_action = trap
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="sun (192.168.0.2)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        net-net {
+            remote_addrs = 192.168.0.1
+
+            local {
+                auth = pubkey
+                certs = sunCert.pem
+            }
+            remote {
+                auth = pubkey
+                id = "C=CH, O=strongSwan, CN=moon.strongswan.org"
+            }
+            children {
+                net-net {
+                    local_ts  = 10.2.0.0/16
+                    remote_ts = 10.1.0.0/16
+                    start_action = trap
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Identity and authentication
+
+The `id` fields in the `remote` sections are the **subjectDistinguishedNames** (DNs) from the peer's end-entity certificate. strongSwan extracts this value from the certificate automatically and matches it against the configured identity.
+
+<Note>
+  The DN string must match exactly what is encoded in the certificate, including field order and spacing. Use `pki --print --in peerCert.pem` to inspect the exact DN.
+</Note>
+
+Both sides use `auth = pubkey`, which means the daemon verifies the peer's certificate signature against the trusted CA in `/etc/swanctl/x509ca/`.
+
+## Loading configuration and bringing up the tunnel
+
+<Steps>
+  <Step title="Load credentials">
+    Load certificates, private keys, and CRLs into the charon daemon:
+
+    ```bash
+    swanctl --load-creds
+    ```
+  </Step>
+  <Step title="Load connections">
+    Apply the connection definitions from `swanctl.conf`:
+
+    ```bash
+    swanctl --load-conns
+    ```
+  </Step>
+  <Step title="Verify the tunnel">
+    Once traffic matching the traffic selectors hits the gateway, the tunnel is established automatically. Inspect active SAs:
+
+    ```bash
+    swanctl --list-sas
+    ```
+  </Step>
+</Steps>
+
+## Traffic-triggered tunnel (`start_action = trap`)
+
+With `start_action = trap`, strongSwan installs a kernel policy (trap) for the configured traffic selectors. The IKE negotiation is triggered automatically the first time a plaintext packet matches the selector — no manual initiation is needed.
+
+<Tip>
+  If you want the tunnel to come up immediately at startup rather than on first traffic, use `start_action = start` instead.
+</Tip>

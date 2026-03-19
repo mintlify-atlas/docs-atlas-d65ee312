@@ -1,0 +1,185 @@
+---
+title: "TPM 2.0 Integration"
+description: Use a TPM 2.0 Trusted Platform Module for secure private key storage
+keywords: ["tpm", "tpm2", "trusted platform module", "hardware key storage", "libtss2", "tpmtss", "pkcs11", "ipsec"]
+---
+
+A Trusted Platform Module (TPM 2.0) is a dedicated hardware chip that generates and stores cryptographic keys in tamper-resistant hardware. When you use a TPM for your strongSwan private key, the key material never leaves the chip — even a privileged process on the host cannot export it.
+
+## What TPM 2.0 offers
+
+- **Hardware-bound key storage** — private keys are generated inside the TPM and cannot be extracted
+- **Platform binding via PCRs** — keys can be sealed to specific Platform Configuration Register (PCR) values, so they are only usable when the platform is in a trusted boot state
+- **Attestation** — the TPM can sign a quote over PCR values, proving the platform's software state to a remote verifier
+- **No software key file** — eliminates the risk of private key theft from the filesystem
+
+## Requirements
+
+| Dependency | Purpose |
+|---|---|
+| `libtss2` (TPM2 Software Stack) | TSS2 ESAPI library for communicating with the TPM |
+| `tpm2-tools` | Command-line tools for TPM provisioning (`tpm2_createprimary`, `tpm2_create`, etc.) |
+| Linux kernel TPM driver | `/dev/tpm0` or `/dev/tpmrm0` (resource manager) |
+| strongSwan `libtpmtss` plugin | strongSwan's TSS2 integration layer |
+
+<Info>
+  Use `/dev/tpmrm0` (the kernel resource manager device) rather than `/dev/tpm0` directly. The resource manager handles concurrent access and flushes contexts automatically.
+</Info>
+
+## The `tpm` and `libtpmtss` plugins
+
+strongSwan's TPM support is provided by two components:
+
+- **`libtpmtss`** — a shared library that wraps the TSS2 ESAPI and FAPI interfaces; linked by the `tpm` plugin
+- **`tpm` plugin** — integrates TPM-resident keys into strongSwan's credential framework so they can be used for IKEv2 authentication
+
+Enable both in your build or verify they are present in your distribution package:
+
+```bash
+swanctl --list-authorities  # should not error; confirms daemon is running with plugins loaded
+ls /usr/lib/ipsec/plugins/libstrongswan-tpm.so
+```
+
+## Provisioning a TPM 2.0 key
+
+<Steps>
+  <Step title="Create a primary key (storage root)">
+    The primary key is the root of a key hierarchy under the Owner hierarchy. This context is regenerated deterministically from the TPM's seed — you do not need to persist it permanently.
+
+    ```bash
+    tpm2_createprimary --hierarchy owner \
+      --hash-algorithm sha256 \
+      --key-algorithm rsa \
+      --out-context primary.ctx
+    ```
+  </Step>
+
+  <Step title="Create an RSA child key under the primary">
+    Generate a 2048-bit RSA key sealed under the primary context. The private blob stays inside the TPM.
+
+    ```bash
+    tpm2_create --parent-context primary.ctx \
+      --hash-algorithm sha256 \
+      --key-algorithm rsa2048 \
+      --attributes 'decrypt|sign' \
+      --out-public rsa.pub \
+      --out-private rsa.priv
+    ```
+  </Step>
+
+  <Step title="Load the key and persist it at a permanent handle">
+    Load the key into the TPM and write it to a persistent handle (NV index in the owner hierarchy). The handle `0x81000001` is a common choice for the first user key.
+
+    ```bash
+    tpm2_load --parent-context primary.ctx \
+      --public rsa.pub \
+      --private rsa.priv \
+      --out-context rsa.ctx
+
+    tpm2_evictcontrol --hierarchy owner \
+      --object-context rsa.ctx \
+      0x81000001
+    ```
+
+    After this step, the key is available at handle `0x81000001` across reboots without needing `primary.ctx` or `rsa.ctx` on disk.
+  </Step>
+
+  <Step title="Extract the public key for certificate issuance">
+    Export the public key in PEM format so you can generate a certificate signing request or self-signed certificate.
+
+    ```bash
+    tpm2_readpublic --object-context 0x81000001 --output rsa.pub.pem --format pem
+    ```
+
+    Use `pki --req` or your CA toolchain to issue a certificate for this public key. Place the resulting certificate in `/etc/swanctl/x509/`.
+  </Step>
+</Steps>
+
+## Loading a TPM key via swanctl
+
+Once the key is at a persistent handle, instruct swanctl to load it using the token interface:
+
+```bash
+swanctl --load-creds
+```
+
+strongSwan discovers TPM-resident keys automatically when the `tpm` plugin is loaded and a persistent handle is referenced in `swanctl.conf`.
+
+## Configuration in swanctl.conf
+
+Reference the TPM key by its persistent handle in the `private` section using a token `handle`:
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    gw {
+        local {
+            auth = pubkey
+            certs = gw-cert.pem
+            id = vpn.example.com
+        }
+        remote {
+            auth = pubkey
+        }
+        children {
+            tunnel {
+                local_ts  = 10.0.0.0/24
+                remote_ts = 10.1.0.0/24
+            }
+        }
+    }
+}
+
+private {
+    tpm-rsa {
+        # Handle of the persistent key in the TPM Owner hierarchy
+        handle = 0x81000001
+        module = tpm
+    }
+}
+```
+
+The `module = tpm` directive tells strongSwan to look for this handle via the `libtpmtss` plugin rather than a PKCS#11 token or a file on disk.
+
+<Note>
+  The certificate referenced in `certs` must correspond to the public key stored at the TPM handle. Generate the certificate using the public key exported in the provisioning steps above.
+</Note>
+
+## PCR binding
+
+You can seal a TPM key to specific PCR values so the key is only available when the platform has booted in a trusted state. This is done during `tpm2_create` using a policy:
+
+```bash
+# Create a PCR policy bound to PCR 7 (Secure Boot state)
+tpm2_createpolicy --policy-pcr \
+  --pcr-list sha256:7 \
+  --policy pcr7.policy
+
+tpm2_create --parent-context primary.ctx \
+  --key-algorithm rsa2048 \
+  --attributes 'decrypt|sign' \
+  --policy pcr7.policy \
+  --out-public rsa-sealed.pub \
+  --out-private rsa-sealed.priv
+```
+
+If the PCR values change (for example, after a firmware update changes the Secure Boot measurement), the key cannot be used until the policy is updated or the key is reprovisioned.
+
+<Warning>
+  After a firmware update or bootloader change, PCR values may differ from those recorded in the sealing policy. Test PCR-sealed key unsealing after any system update before relying on it in production.
+</Warning>
+
+## Attestation use cases
+
+TPM 2.0 attestation lets a remote verifier confirm what software is running on the platform:
+
+1. The verifier sends a nonce to the platform.
+2. The platform uses an Attestation Key (AK) to sign a quote over a set of PCR values and the nonce.
+3. The verifier checks the quote signature against the AK certificate (issued by the TPM manufacturer or a local CA) and validates the PCR values against a known-good reference.
+
+strongSwan can use an attestation key as the IKE authentication key, enabling the remote gateway to verify not just the identity of the VPN endpoint but also the integrity of its boot chain.
+
+## Further reading
+
+For a complete TPM HOWTO including IKEv2 authentication with ECDSA keys in the TPM, EAP-TLS with TPM-resident client keys, and FAPI-based key management, refer to the [strongSwan documentation](https://docs.strongswan.org).

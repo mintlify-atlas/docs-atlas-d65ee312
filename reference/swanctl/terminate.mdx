@@ -1,0 +1,130 @@
+---
+title: "swanctl --terminate"
+description: Terminate IKE or CHILD Security Associations, sending IKEv2 DELETE notifications to the remote peer.
+sidebarTitle: "--terminate"
+---
+
+The `--terminate` command instructs the strongSwan IKE daemon to delete one or more Security Associations. It sends an IKEv2 `INFORMATIONAL` exchange with a `DELETE` payload to the remote peer, then removes the local SA and associated kernel policies.
+
+## Synopsis
+
+```bash
+swanctl --terminate --child <name> | --ike <name> |
+                    --child-id <id> | --ike-id <id>
+        [--force] [--timeout <s>] [--loglevel <level>] [--raw|--pretty]
+```
+
+<Note>
+You must specify exactly one of `--child`, `--ike`, `--child-id`, or `--ike-id`.
+Terminating an IKE_SA also tears down all CHILD_SAs within it.
+</Note>
+
+## Options
+
+<ParamField path="--child" type="string">
+  Terminate all CHILD_SAs that match the given configuration name. All active
+  CHILD_SAs derived from this config across any IKE_SA will be deleted.
+</ParamField>
+
+<ParamField path="--ike" type="string">
+  Terminate the IKE_SA matching the given configuration name, including all of
+  its CHILD_SAs.
+</ParamField>
+
+<ParamField path="--child-id" type="integer">
+  Terminate a single CHILD_SA by its unique numeric identifier. Use
+  `swanctl --list-sas` to find the ID (shown as `#<id>` in the CHILD_SA line).
+</ParamField>
+
+<ParamField path="--ike-id" type="integer">
+  Terminate a single IKE_SA by its unique numeric identifier. The ID is shown
+  as `#<id>` in the IKE_SA header from `swanctl --list-sas`.
+</ParamField>
+
+<ParamField path="--force" type="boolean">
+  Tear down the SA locally without waiting for the DELETE exchange to complete.
+  Use this when the remote peer is unreachable or unresponsive.
+</ParamField>
+
+<ParamField path="--timeout" type="integer" default="0">
+  Seconds to wait for the DELETE exchange to finish before detaching. `0`
+  (default) waits indefinitely. When combined with `--force`, the daemon still
+  sends the DELETE but does not wait for acknowledgement.
+</ParamField>
+
+<ParamField path="--loglevel" type="integer" default="1">
+  Verbosity of log messages streamed back over the `control-log` VICI event.
+  Range: `0` (errors only) to `4` (full debug).
+</ParamField>
+
+<ParamField path="--raw" type="boolean">
+  Print the raw VICI response message.
+</ParamField>
+
+<ParamField path="--pretty" type="boolean">
+  Print the raw VICI response with pretty-print indentation. Implies `--raw`.
+</ParamField>
+
+<ParamField path="--uri" type="string">
+  VICI socket URI. Overrides the default `unix:///var/run/charon.vici`.
+</ParamField>
+
+## Examples
+
+### Terminate an IKE_SA by config name
+
+This closes the IKE_SA and all CHILD_SAs belonging to the `net-net` connection:
+
+```bash
+swanctl --terminate --ike net-net
+```
+
+Expected output:
+
+```
+[IKE] deleting IKE_SA net-net[1] between 192.168.0.1[moon.strongswan.org]...192.168.0.2[sun.strongswan.org]
+[IKE] sending DELETE for IKE_SA net-net[1]
+[ENC] generating INFORMATIONAL request 3 [ D ]
+terminate completed successfully
+```
+
+### Terminate a specific CHILD_SA by config name
+
+Only the CHILD_SA is removed; the parent IKE_SA remains active:
+
+```bash
+swanctl --terminate --child home
+```
+
+### Terminate by unique ID
+
+Use the numeric ID from `swanctl --list-sas` output when multiple SAs share
+the same config name:
+
+```bash
+swanctl --terminate --ike-id 3
+swanctl --terminate --child-id 7
+```
+
+### Force-delete an unreachable peer
+
+When the remote gateway is down and you need to clean up local state
+immediately:
+
+```bash
+swanctl --terminate --ike net-net --force
+```
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | SA terminated successfully |
+| `1` | Termination failed (error message printed to stderr) |
+| other | Connection to VICI socket failed or unexpected error |
+
+## See also
+
+- [`swanctl --initiate`](/reference/swanctl/initiate) — establish a new SA
+- [`swanctl --list-sas`](/reference/swanctl/list-sas) — find SA names and IDs before terminating
+- [`swanctl --rekey`](/reference/swanctl/rekey) — rekey instead of tearing down

@@ -1,0 +1,86 @@
+---
+title: "pki --verify"
+description: Verify a certificate's signature and trust chain against a CA certificate.
+sidebarTitle: "--verify"
+---
+
+`pki --verify` validates an X.509 certificate against a CA certificate. It checks the certificate's signature, validity period, and optionally checks revocation status against a CRL.
+
+## Synopsis
+
+```bash
+pki --verify --in <cert> --cacert <ca> [--crl <crl>]
+```
+
+## Options
+
+<ParamField path="--in" type="string">
+  Path to the certificate to verify (PEM or DER). Read from stdin if omitted.
+</ParamField>
+
+<ParamField path="--cacert" type="string">
+  Path to the CA certificate or directory of CA certificates to verify against. Can be specified multiple times to build an intermediate chain. Also accepts a directory path, in which case all certificate files in that directory are loaded.
+</ParamField>
+
+<ParamField path="--crl" type="string">
+  Path to a CRL file or directory to check revocation status. Can be specified multiple times. If provided, the certificate's revocation status is checked against the CRL.
+</ParamField>
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Certificate is valid and trusted |
+| non-zero | Verification failed (invalid signature, expired, revoked, or untrusted issuer) |
+
+## Examples
+
+Verify a certificate against a CA:
+
+```bash
+pki --verify --in moonCert.pem --cacert strongswanCert.pem
+```
+
+Successful verification produces output like:
+
+```text
+verification ok
+```
+
+Verify a certificate and check revocation via CRL:
+
+```bash
+pki --verify \
+  --in moonCert.pem \
+  --cacert strongswanCert.pem \
+  --crl strongswan.crl
+```
+
+Verify a certificate against an intermediate CA and a root CA:
+
+```bash
+pki --verify \
+  --in moonCert.pem \
+  --cacert intermediateCert.pem \
+  --cacert strongswanCert.pem
+```
+
+Verify using a directory of CA certificates:
+
+```bash
+pki --verify \
+  --in moonCert.pem \
+  --cacert /etc/swanctl/x509ca/
+```
+
+<Note>
+  `pki --verify` performs offline verification only. It does not perform OCSP lookups. To check OCSP revocation, use the charon daemon's revocation checking mechanism at connection time.
+</Note>
+
+<Warning>
+  A non-zero exit code does not always indicate a revoked certificate. It may also indicate that the certificate has expired, the signature is invalid, or the issuer is not in the trusted CA set.
+</Warning>
+
+<Tip>
+  Use `pki --verify` in deployment scripts to validate that issued certificates are well-formed and trusted before copying them to remote hosts.
+</Tip>

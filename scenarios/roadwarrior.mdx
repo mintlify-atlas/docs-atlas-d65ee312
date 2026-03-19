@@ -1,0 +1,211 @@
+---
+title: "Roadwarrior VPN"
+description: Configure a strongSwan gateway to serve dynamic remote VPN clients with certificate authentication
+keywords: ["roadwarrior", "remote access", "vpn", "ipsec", "swanctl", "virtual ip", "pool", "dynamic ip"]
+---
+
+A roadwarrior setup allows remote clients with dynamic or unknown IP addresses to connect to a central gateway. The gateway accepts any incoming connection from a peer that can present a valid certificate signed by the trusted CA.
+
+## Network topology
+
+```text
+10.1.0.0/16 -- | 192.168.0.1 | === | x.x.x.x |
+  moon-net          moon              carol
+```
+
+Gateway **moon** has a fixed address. Roadwarrior **carol** can be anywhere on the internet with any IP address.
+
+## Certificate files
+
+<Tabs>
+  <Tab title="moon (gateway)">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/moonCert.pem
+    /etc/swanctl/private/moonKey.pem
+    ```
+  </Tab>
+  <Tab title="carol (roadwarrior)">
+    ```text
+    /etc/swanctl/x509ca/strongswanCert.pem
+    /etc/swanctl/x509/carolCert.pem
+    /etc/swanctl/private/carolKey.pem
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+<Tabs>
+  <Tab title="moon (gateway)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        rw {
+            local {
+                auth = pubkey
+                certs = moonCert.pem
+                id = moon.strongswan.org
+            }
+            remote {
+                auth = pubkey
+            }
+            children {
+                net-net {
+                    local_ts  = 10.1.0.0/16
+                }
+            }
+        }
+    }
+    ```
+
+    The gateway's `remote` block has no `id` restriction — it accepts any client that presents a certificate signed by the trusted CA.
+  </Tab>
+  <Tab title="carol (roadwarrior)">
+    ```text
+    # /etc/swanctl/swanctl.conf
+
+    connections {
+        home {
+            remote_addrs = moon.strongswan.org
+
+            local {
+                auth = pubkey
+                certs = carolCert.pem
+                id = carol@strongswan.org
+            }
+            remote {
+                auth = pubkey
+                id = moon.strongswan.org
+            }
+            children {
+                home {
+                    local_ts  = 10.1.0.0/16
+                    start_action = start
+                }
+            }
+        }
+    }
+    ```
+
+    `start_action = start` causes carol to initiate the tunnel immediately when the connection definition is loaded.
+  </Tab>
+</Tabs>
+
+## DNS resolution at runtime
+
+Carol's `remote_addrs = moon.strongswan.org` is a hostname rather than an IP address. strongSwan resolves this via DNS at the time the connection is initiated, so carol's configuration does not need to change if the gateway's IP address changes.
+
+## Client identity with email address
+
+Carol's IKEv2 identity is `carol@strongswan.org` (an RFC 822 email address). This value must be present as a **subjectAlternativeName (SAN)** in `carolCert.pem`. The gateway uses this identity to distinguish clients from each other.
+
+<Info>
+  When generating carol's certificate with `pki`, add the SAN with:
+
+  ```bash
+  pki --req ... --san carol@strongswan.org ...
+  ```
+</Info>
+
+## Variant: virtual IP addresses
+
+Roadwarriors typically have a different IP address each time they connect, making return routing from `moon-net` back to the client difficult. Assigning a **virtual IP** from a fixed pool solves this.
+
+```text
+10.1.0.0/16 -- | 192.168.0.1 | === | x.x.x.x | -- 10.3.0.1
+  moon-net          moon              carol       virtual IP
+```
+
+### Gateway configuration with pool
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    rw {
+        pools = rw_pool
+
+        local {
+            auth = pubkey
+            certs = moonCert.pem
+            id = moon.strongswan.org
+        }
+        remote {
+            auth = pubkey
+        }
+        children {
+            net-net {
+                local_ts  = 10.1.0.0/16
+            }
+        }
+    }
+}
+
+pools {
+    rw_pool {
+        addrs = 10.30.0.0/16
+    }
+}
+```
+
+### Roadwarrior configuration requesting a virtual IP
+
+```text
+# /etc/swanctl/swanctl.conf
+
+connections {
+    home {
+        remote_addrs = moon.strongswan.org
+        vips = 0.0.0.0
+
+        local {
+            auth = pubkey
+            certs = carolCert.pem
+            id = carol@strongswan.org
+        }
+        remote {
+            auth = pubkey
+            id = moon.strongswan.org
+        }
+        children {
+            home {
+                local_ts  = 10.1.0.0/16
+                start_action = start
+            }
+        }
+    }
+}
+```
+
+`vips = 0.0.0.0` tells the client to request an IPv4 virtual IP from the gateway using either IKEv2 configuration payloads or IKEv1 mode config.
+
+## Loading configuration and pools
+
+<Steps>
+  <Step title="Load credentials on both endpoints">
+    ```bash
+    swanctl --load-creds
+    ```
+  </Step>
+  <Step title="Load address pools on the gateway">
+    This step is only required on the gateway when using virtual IPs:
+
+    ```bash
+    swanctl --load-pools
+    ```
+  </Step>
+  <Step title="Load connections on both endpoints">
+    ```bash
+    swanctl --load-conns
+    ```
+
+    Carol's tunnel initiates automatically due to `start_action = start`.
+  </Step>
+  <Step title="Verify">
+    ```bash
+    swanctl --list-sas
+    ```
+  </Step>
+</Steps>

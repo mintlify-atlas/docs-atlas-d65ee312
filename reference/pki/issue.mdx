@@ -1,0 +1,166 @@
+---
+title: "pki --issue"
+description: Issue a signed certificate using a CA key and certificate.
+sidebarTitle: "--issue"
+---
+
+`pki --issue` signs a certificate using a CA private key and CA certificate. The input can be a PKCS#10 certificate signing request (CSR), a raw public key, or a private key from which the public key is extracted.
+
+## Synopsis
+
+```bash
+pki --issue --cacert <file> --cakey <file> [--in <file>] [--type <type>] [options]
+```
+
+## Options
+
+### CA inputs
+
+<ParamField path="--cacert" type="string" required>
+  Path to the CA certificate file (PEM or DER).
+</ParamField>
+
+<ParamField path="--cakey" type="string" required>
+  Path to the CA private key file (PEM or DER). Required when signing with a file-based key.
+</ParamField>
+
+<ParamField path="--cakeyid" type="string">
+  Hex-encoded CKA_ID of the CA private key on a token. Use instead of `--cakey` for HSM/smartcard-backed keys.
+</ParamField>
+
+### Certificate input
+
+<ParamField path="--in" type="string">
+  Input file containing the subject's public key, private key, or PKCS#10 CSR. Read from stdin if omitted.
+</ParamField>
+
+<ParamField path="--type" type="string" default="pub">
+  Input file type. Accepted values:
+  - `pkcs10` — PKCS#10 certificate signing request
+  - `pub` — raw public key (default)
+  - `priv` — private key (public key is extracted)
+  - `rsa`, `ecdsa`, `ed25519`, `ed448` — type-specific private keys
+</ParamField>
+
+### Subject attributes
+
+<ParamField path="--dn" type="string">
+  Subject Distinguished Name to embed in the certificate. If using a PKCS#10 input, this overrides the DN in the CSR.
+</ParamField>
+
+<ParamField path="--san" type="string">
+  Subject Alternative Name. Can be specified multiple times. Accepts FQDNs, email addresses, IPv4 and IPv6 addresses.
+</ParamField>
+
+### Certificate properties
+
+<ParamField path="--lifetime" type="number" default="1095">
+  Certificate validity period in days.
+</ParamField>
+
+<ParamField path="--not-before" type="string">
+  Start of certificate validity. Accepts a date string or Unix timestamp.
+</ParamField>
+
+<ParamField path="--not-after" type="string">
+  End of certificate validity. Overrides `--lifetime` if specified.
+</ParamField>
+
+<ParamField path="--serial" type="string">
+  Serial number in hexadecimal. If omitted, a random serial is generated.
+</ParamField>
+
+<ParamField path="--ca" type="boolean">
+  Issue as a CA certificate, including the CA basic constraint.
+</ParamField>
+
+<ParamField path="--pathlen" type="number">
+  Maximum CA path length constraint. Only meaningful when `--ca` is set.
+</ParamField>
+
+<ParamField path="--flag" type="string">
+  Extended Key Usage (EKU) flag. Can be specified multiple times. Accepted values:
+  - `serverAuth` — TLS server authentication
+  - `clientAuth` — TLS client authentication
+  - `ikeIntermediate` — IKE intermediate certificate
+  - `crlSign` — CRL signing
+  - `ocspSigning` — OCSP response signing
+  - `msSmartcardLogon` — Microsoft smartcard logon
+</ParamField>
+
+<ParamField path="--crl" type="string">
+  CRL Distribution Point URI to embed. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="--ocsp" type="string">
+  OCSP responder URI to embed. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="--digest" type="string">
+  Digest algorithm (e.g. `sha256`, `sha384`, `sha512`). Defaults to an algorithm appropriate for the CA key type.
+</ParamField>
+
+<ParamField path="--rsa-padding" type="string">
+  RSA padding scheme. Use `pss` for RSASSA-PSS.
+</ParamField>
+
+<ParamField path="--outform" type="string" default="der">
+  Output encoding format. Accepted values: `pem`, `der`.
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write the issued certificate to the specified file path. If omitted, output goes to stdout.
+</ParamField>
+
+## Examples
+
+Issue a certificate from a PKCS#10 CSR:
+
+```bash
+pki --issue \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --type pkcs10 \
+  --in moonReq.pem \
+  --serial 01 \
+  --lifetime 1826 \
+  --outform pem > moonCert.pem
+```
+
+Issue a VPN gateway certificate with SANs and EKU flags:
+
+```bash
+pki --issue \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --in moonKey.pem \
+  --dn "C=CH, O=strongSwan, CN=moon.strongswan.org" \
+  --san moon.strongswan.org \
+  --flag serverAuth \
+  --flag ikeIntermediate \
+  --lifetime 1826 \
+  --outform pem > moonCert.pem
+```
+
+Issue a client certificate with a CRL distribution point:
+
+```bash
+pki --issue \
+  --cacert strongswanCert.pem \
+  --cakey strongswanKey.pem \
+  --type pkcs10 \
+  --in carolReq.pem \
+  --serial 02 \
+  --lifetime 1826 \
+  --flag clientAuth \
+  --crl http://crl.strongswan.org/strongswan.crl \
+  --outform pem > carolCert.pem
+```
+
+<Note>
+  When `--type pkcs10` is used, the DN and SANs are taken from the CSR unless overridden with `--dn` or `--san`.
+</Note>
+
+<Tip>
+  Use incrementing `--serial` values (hex) to maintain unique serial numbers per CA. Serial numbers are visible in CRLs and are used by OCSP.
+</Tip>

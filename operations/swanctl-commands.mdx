@@ -1,0 +1,152 @@
+---
+title: "swanctl commands"
+description: "Complete reference for managing VPN connections with the swanctl command-line tool."
+---
+
+`swanctl` is the primary command-line interface for managing the charon IKE daemon. It communicates with charon over the VICI (Versatile IKE Control Interface) socket, giving you full control over connection lifecycle, credentials, and runtime state.
+
+<Info>
+  By default, `swanctl` connects to the VICI socket at `/var/run/charon.vici`. Use `--uri` to specify a custom socket path, for example `--uri unix:///path/to/charon.vici`.
+</Info>
+
+## Loading configuration
+
+These commands push configuration from `swanctl.conf` into the running daemon. Changes to the configuration file are not applied automatically — you must reload explicitly.
+
+| Command | Description |
+|---|---|
+| `swanctl --load-all` | Load connections, credentials, pools, and authorities in one pass. |
+| `swanctl --load-conns` | Load or reload IKE connection definitions. |
+| `swanctl --load-creds [--noprompt]` | Load certificates, private keys, and shared secrets. Pass `--noprompt` to skip passphrase prompts for unencrypted keys. |
+| `swanctl --load-pools` | Load virtual IP address pool definitions. |
+| `swanctl --load-authorities` | Load CA and trust anchor definitions. |
+| `swanctl --reload-settings` | Reload `strongswan.conf` without restarting the daemon. |
+
+<Tip>
+  Use `swanctl --load-all` after editing `swanctl.conf` to apply all changes at once. It is equivalent to running `--load-conns`, `--load-creds`, `--load-pools`, and `--load-authorities` in sequence.
+</Tip>
+
+## SA management
+
+These commands initiate, terminate, and rekey Security Associations at runtime.
+
+### Initiating connections
+
+```bash
+# Initiate a CHILD_SA by its configured name
+swanctl --initiate --child home
+
+# Initiate a CHILD_SA under a specific IKE_SA
+swanctl --initiate --child net --ike gw-gw
+
+# Initiate and wait up to 30 seconds for completion
+swanctl --initiate --child home --timeout 30
+```
+
+The `--child` flag names a CHILD_SA configuration. The optional `--ike` flag names the parent IKE_SA configuration, which is useful when the same CHILD_SA name exists under multiple connections.
+
+### Terminating connections
+
+```bash
+# Terminate all SAs belonging to an IKE connection
+swanctl --terminate --ike gw-gw
+
+# Terminate a specific CHILD_SA by name
+swanctl --terminate --child home
+
+# Terminate by unique numeric ID (from --list-sas output)
+swanctl --terminate --ike-id 3
+swanctl --terminate --child-id 7
+
+# Terminate immediately without waiting for DELETE exchange
+swanctl --terminate --ike gw-gw --force
+```
+
+### Rekeying
+
+```bash
+# Trigger an IKE_SA rekey
+swanctl --rekey --ike gw-gw
+
+# Trigger a CHILD_SA rekey
+swanctl --rekey --child home
+```
+
+### Redirecting clients (IKEv2)
+
+```bash
+# Redirect a connected IKEv2 client to another gateway
+swanctl --redirect --ike rw --gateway 203.0.113.10
+```
+
+## Listing state
+
+| Command | Description |
+|---|---|
+| `swanctl --list-sas` | List all active IKE_SAs and their CHILD_SAs with full detail. |
+| `swanctl --list-conns` | List all connection configurations loaded in the daemon. |
+| `swanctl --list-certs` | List loaded certificates (identity, issuer, validity). |
+| `swanctl --list-pools [--leases]` | List configured IP pools. Add `--leases` to show individual lease assignments. |
+| `swanctl --list-pols` | List installed kernel traffic policies. |
+| `swanctl --list-authorities` | List loaded CA authority definitions. |
+| `swanctl --list-algs` | List all cryptographic algorithms available in the loaded plugins. |
+
+### Example: `swanctl --list-sas`
+
+```text
+gw-gw: #1, ESTABLISHED, IKEv2, aef372b5d74e2e0e_i* 8f1e6e42a3c87f5d_r
+  local  'gateway.example.com' @ 203.0.113.1[4500]
+  remote 'peer.example.com' @ 198.51.100.1[4500]
+  AES_CBC-256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+  established 1842s ago, rekeying in 12453s
+  net: #1, reqid 1, INSTALLED, TUNNEL, ESP:
+    AES_GCM_16-256
+    installed 1842s ago, rekeying in 1384s, expires in 2958s
+    in  c3a7e891,   8765 bytes,   112 packets,    23s ago
+    out cf2d4180,  12048 bytes,   154 packets,    23s ago
+    local  10.0.0.0/24
+    remote 10.1.0.0/24
+```
+
+Each IKE_SA entry shows:
+- Connection name, unique ID, state, IKE version, and SPIs (`_i` = initiator SPI, `*` marks which role this node holds)
+- Local and remote identities, IP addresses, and ports
+- Negotiated encryption, integrity, PRF, and DH algorithms
+- Time since establishment, next rekey time
+
+Each nested CHILD_SA entry shows:
+- Name, request ID, state, mode (TUNNEL or TRANSPORT), protocol (ESP or AH), and cipher suite
+- Inbound and outbound SPIs, bytes/packets transferred, and last use time
+- Local and remote traffic selectors
+
+## Monitoring and statistics
+
+| Command | Description |
+|---|---|
+| `swanctl --stats` | Show daemon uptime, worker threads, job queues, and IKE_SA counts. |
+| `swanctl --counters` | Show global IKE event counters. |
+| `swanctl --counters --name <conn>` | Show per-connection event counters. |
+| `swanctl --counters --all` | Show counters for all tracked connections. |
+| `swanctl --counters --reset` | Reset all counters to zero. |
+| `swanctl --log` | Stream live log output from charon (levels 0 and 1 only). |
+
+### Example: `swanctl --stats`
+
+```text
+uptime: 3 hours, since Mar 19 09:14:22 2026
+worker threads: 16 total, 14 idle, working: 0/0/1/1
+job queues: 0/0/0/0
+jobs scheduled: 42
+IKE_SAs: 3 total, 0 half-open
+loaded plugins: charon aes sha2 sha1 md5 random nonce x509 revocation pubkey pkcs1 pkcs8 pkcs12 pem curve25519 openssl kernel-netlink resolve socket-default updown vici
+```
+
+Worker thread priority levels (from the source) are **critical / high / medium / low**, reflecting the job priority queue.
+
+## Other commands
+
+| Command | Description |
+|---|---|
+| `swanctl --install` | Install a trap or shunt policy. |
+| `swanctl --flush-certs [--type <type>]` | Flush cached certificates. |
+| `swanctl --version` | Show swanctl and charon version information. |

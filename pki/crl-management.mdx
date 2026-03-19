@@ -1,0 +1,158 @@
+---
+title: 'CRL Management'
+description: Create, sign, and distribute Certificate Revocation Lists for strongSwan VPN.
+keywords: ['CRL', 'revocation', 'pki', 'signcrl', 'OCSP', 'certificate revocation list']
+---
+
+A Certificate Revocation List (CRL) is a signed list of certificate serial numbers that the CA has invalidated before their natural expiry. strongSwan's `charon` daemon checks CRLs during IKEv2 authentication to reject peers presenting revoked credentials.
+
+## Creating an empty CRL
+
+An initial CRL with no revoked entries establishes the baseline. Peers that have fetched this CRL know that no certificates have been revoked yet.
+
+```bash
+pki --signcrl \
+    --cacert strongswanCert.pem \
+    --cakey strongswanKey.pem \
+    --lifetime 30 > strongswan.crl
+```
+
+| Option | Description |
+|---|---|
+| `--cacert` | CA certificate used to identify the CRL issuer |
+| `--cakey` | CA private key used to sign the CRL |
+| `--lifetime <days>` | Days until the CRL expires (default: 15) |
+
+<Note>
+The `--lifetime` value should be shorter than your certificate validity periods. A 30-day CRL is common for production; use shorter intervals (e.g., 7 days) for higher-security environments.
+</Note>
+
+## Revoking a certificate
+
+To revoke a specific certificate, issue a new CRL that incorporates the previous one and adds the revoked entry:
+
+```bash
+pki --signcrl \
+    --cacert strongswanCert.pem \
+    --cakey strongswanKey.pem \
+    --lifetime 30 \
+    --lastcrl strongswan.crl \
+    --reason key-compromise \
+    --cert moonCert.pem > new.crl
+```
+
+| Option | Description |
+|---|---|
+| `--lastcrl <file>` | Previous CRL; all existing revocations are carried forward |
+| `--reason <reason>` | Revocation reason code (see table below) |
+| `--cert <file>` | Certificate file to revoke (its serial number is extracted) |
+| `--serial <hex>` | Revoke by serial number instead of certificate file |
+
+### Revocation reasons
+
+| Reason | When to use |
+|---|---|
+| `key-compromise` | Private key is known or suspected to be compromised |
+| `ca-compromise` | The issuing CA's key is compromised |
+| `affiliation-changed` | Subject's relationship to the organization has changed |
+| `superseded` | Certificate has been replaced by a new one |
+| `cessation-of-operation` | The subject no longer operates the certified system |
+| `certificate-hold` | Temporary suspension (can be unrevoked later) |
+
+The `--reason` option can be omitted; the revocation will then be recorded without an explicit reason code.
+
+## Inspecting a CRL
+
+Verify the CRL content and confirm that the expected serial numbers are listed:
+
+```bash
+pki --print --type crl --in new.crl
+```
+
+Expected output:
+
+```text
+issuer:   "C=CH, O=strongSwan, CN=strongSwan Root CA"
+update:    this on May 19 11:13:01 2017, ok
+           next on Jun 18 11:13:01 2017, ok (expires in 29 days)
+serial:    02
+authKeyId: 2b:95:14:5b:c3:22:87:de:d1:42:91:88:63:b3:d5:c1:92:7a:0f:5d
+1 revoked certificate:
+  01: May 19 11:13:01 2017, key compromise
+```
+
+Confirm that `authKeyId` matches your CA's subject key identifier and that revoked serial numbers and reasons are correct.
+
+## Distributing CRLs
+
+strongSwan supports two distribution methods that can be used together:
+
+### Static distribution (local file)
+
+Place the CRL in binary DER or Base64 PEM format in `/etc/swanctl/x509crl/`:
+
+```bash
+install -m 644 new.crl /etc/swanctl/x509crl/
+```
+
+Then reload credentials on the gateway:
+
+```bash
+swanctl --load-creds
+```
+
+### Dynamic distribution (HTTP or LDAP)
+
+Embed CRL Distribution Point (CDP) URLs in end-entity certificates at issuance time using the `--crl` option of `pki --issue`:
+
+```bash
+pki --issue ... \
+    --crl http://crl.strongswan.org/strongswan.crl \
+    --crl "ldap://ldap.strongswan.org/cn=strongSwan Root CA,o=strongSwan,c=CH?certificateRevocationList"
+```
+
+When a peer presents such a certificate, `charon` fetches the CRL from the embedded URL automatically.
+
+## Enabling local CRL caching
+
+Dynamically fetched CRLs can be cached on disk so they are available immediately after daemon restart, without waiting for a network fetch:
+
+```text
+# /etc/strongswan.conf
+charon {
+    cache_crls = yes
+}
+```
+
+Cached copies are stored in `/etc/swanctl/x509crl/` using a filename derived from the issuer's subject key identifier with a `.crl` suffix. When a cached CRL becomes stale, `charon` automatically fetches an updated copy from the CDP during the next IKEv2 authentication.
+
+<Tip>
+Combine `cache_crls = yes` with embedded CDP URLs. This gives you dynamic revocation checking at runtime plus resilience against temporary CRL server unavailability.
+</Tip>
+
+## OCSP as an alternative
+
+Online Certificate Status Protocol (OCSP) provides real-time revocation status without the latency of distributing full CRL files. Configure OCSP responder URIs in the `authorities` section of `swanctl.conf`:
+
+```text
+authorities {
+    strongSwan {
+        cacert = strongswanCert.pem
+        ocsp_uris = http://ocsp.strongswan.org
+    }
+}
+```
+
+<Info>
+OCSP and CRLs can coexist. strongSwan will prefer OCSP when a responder URI is configured, falling back to CRL checking if the OCSP responder is unreachable.
+</Info>
+
+## Updating CRLs on a running gateway
+
+After placing a new CRL in `/etc/swanctl/x509crl/`, reload it without restarting the daemon:
+
+```bash
+swanctl --load-creds
+```
+
+The updated revocation list takes effect for all subsequent IKEv2 authentications.

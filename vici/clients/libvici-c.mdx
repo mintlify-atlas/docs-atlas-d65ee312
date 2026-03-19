@@ -1,0 +1,233 @@
+---
+title: "libvici C Library"
+description: "C client library for the VICI protocol to build custom strongSwan management applications"
+---
+
+## Overview
+
+`libvici` is the reference implementation of a C client library for the VICI protocol. It is built on top of `libstrongswan` and provides a stable API for writing management applications in C. The library uses the libstrongswan thread pool to deliver event messages asynchronously.
+
+<Note>
+The `libvici.h` header is MIT-licensed to simplify reuse. However, `libvici.c` is GPL-licensed because it depends on the GPL-licensed `libstrongswan`.
+</Note>
+
+## Building
+
+Link your application against both `libvici` and `libstrongswan`:
+
+```sh
+gcc myapp.c -lvici -lstrongswan -o myapp
+```
+
+Include the header in your source:
+
+```c
+#include <libvici.h>
+```
+
+## Connecting to the Daemon
+
+Call `vici_init()` once before any other library use, then connect with `vici_connect()`. Pass `NULL` to use the system default socket path (`/var/run/charon.vici`), or supply a URI prefixed with `unix://` for a custom path or `tcp://` for a TCP host:port.
+
+<Steps>
+  <Step title="Initialize the library">
+    Call `vici_init()` to initialize libstrongswan and its thread pool.
+  </Step>
+  <Step title="Open a connection">
+    Call `vici_connect(uri)` — returns an opaque `vici_conn_t*` context, or `NULL` on error (check `errno`).
+  </Step>
+  <Step title="Perform operations">
+    Use the connection context to send requests and register for events.
+  </Step>
+  <Step title="Disconnect and clean up">
+    Call `vici_disconnect(conn)` when done, then `vici_deinit()` before exit.
+  </Step>
+</Steps>
+
+```c
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
+#include <libvici.h>
+
+int main(int argc, char *argv[])
+{
+	vici_conn_t *conn;
+	int ret = 0;
+
+	vici_init();
+	conn = vici_connect(NULL);
+	if (conn)
+	{
+		/* do stuff */
+		vici_disconnect(conn);
+	}
+	else
+	{
+		ret = errno;
+		fprintf(stderr, "connecting failed: %s\n", strerror(errno));
+	}
+	vici_deinit();
+	return ret;
+}
+```
+
+## A Simple Request
+
+Requests are built with `vici_begin()`, optionally populated with key/value pairs and sections, then submitted with `vici_submit()`. The request is consumed by `vici_submit()` — do not use the `vici_req_t*` after that call. Free the response with `vici_free_res()` when done.
+
+The following example issues a `version` command and prints the result:
+
+```c
+int get_version(vici_conn_t *conn)
+{
+	vici_req_t *req;
+	vici_res_t *res;
+	int ret = 0;
+
+	req = vici_begin("version");
+	res = vici_submit(req, conn);
+	if (res)
+	{
+		printf("%s %s (%s, %s, %s)\n",
+			vici_find_str(res, "", "daemon"),
+			vici_find_str(res, "", "version"),
+			vici_find_str(res, "", "sysname"),
+			vici_find_str(res, "", "release"),
+			vici_find_str(res, "", "machine"));
+		vici_free_res(res);
+	}
+	else
+	{
+		ret = errno;
+		fprintf(stderr, "version request failed: %s\n", strerror(errno));
+	}
+	return ret;
+}
+```
+
+`vici_find_str(res, def, fmt, ...)` looks up a key in the response and returns its string value, or `def` if the key is not found. The key path supports dot-separated section prefixes (e.g. `"ike.proposal"`).
+
+## Event Streaming with Callback Parsing
+
+Some commands stream their results as a sequence of events. Register for an event with `vici_register()` before issuing the command, and unregister again afterwards by passing `NULL` as the callback.
+
+The example below lists all loaded connections using the `list-conns` command, which emits one `list-conn` event per connection. A `vici_parse_cb()` callback walks the event message and prints each connection name:
+
+```c
+int conn_cb(void *null, vici_res_t *res, char *name)
+{
+	printf("%s\n", name);
+	return 0;
+}
+
+void list_cb(void *null, char *name, vici_res_t *res)
+{
+	if (vici_parse_cb(res, conn_cb, NULL, NULL, NULL) != 0)
+	{
+		fprintf(stderr, "parsing failed: %s\n", strerror(errno));
+	}
+}
+
+int list_conns(vici_conn_t *conn)
+{
+	vici_req_t *req;
+	vici_res_t *res;
+	int ret = 0;
+
+	if (vici_register(conn, "list-conn", list_cb, NULL) == 0)
+	{
+		req = vici_begin("list-conns");
+		res = vici_submit(req, conn);
+		if (res)
+		{
+			vici_free_res(res);
+		}
+		else
+		{
+			ret = errno;
+			fprintf(stderr, "request failed: %s\n", strerror(errno));
+		}
+		vici_register(conn, "list-conn", NULL, NULL);
+	}
+	else
+	{
+		ret = errno;
+		fprintf(stderr, "registration failed: %s\n", strerror(errno));
+	}
+	return ret;
+}
+```
+
+<Warning>
+Do not call `vici_submit()` from within a `vici_event_cb_t` callback. Event callbacks are invoked from an asynchronous thread in the libstrongswan thread pool.
+</Warning>
+
+<Note>
+Do not call `vici_free_res()` on event messages inside a `vici_event_cb_t`. The library frees event messages automatically after the callback returns.
+</Note>
+
+## API Reference
+
+### Library Lifecycle
+
+| Function | Description |
+|---|---|
+| `vici_init()` | Initialize libvici and the libstrongswan thread pool. Call once before any other function. |
+| `vici_deinit()` | Deinitialize libvici. Call once after all connections are closed. |
+
+### Connection Management
+
+| Function | Description |
+|---|---|
+| `vici_conn_t* vici_connect(char *uri)` | Open a connection to the vici service. `uri` may be `NULL` for the system default, `unix:///path` for a UNIX socket, or `tcp://host:port`. Returns `NULL` on error. |
+| `void vici_disconnect(vici_conn_t *conn)` | Close and free a connection context. |
+
+### Building Requests
+
+| Function | Description |
+|---|---|
+| `vici_req_t* vici_begin(char *name)` | Start building a new request message for the named command. Always succeeds. |
+| `void vici_begin_section(vici_req_t *req, char *name)` | Open a new named section within the request. |
+| `void vici_end_section(vici_req_t *req)` | Close the most recently opened section. |
+| `void vici_add_key_value(vici_req_t *req, char *key, void *buf, int len)` | Add a key/value pair using a raw blob as the value. |
+| `void vici_add_key_valuef(vici_req_t *req, char *key, char *fmt, ...)` | Add a key/value pair using a `printf`-style format string as the value. |
+| `void vici_begin_list(vici_req_t *req, char *name)` | Open a new named list. Only list items may be added until the list is closed. |
+| `void vici_add_list_item(vici_req_t *req, void *buf, int len)` | Add a raw blob item to the currently open list. |
+| `void vici_add_list_itemf(vici_req_t *req, char *fmt, ...)` | Add a `printf`-formatted item to the currently open list. |
+| `void vici_end_list(vici_req_t *req)` | Close the currently open list. |
+
+### Submitting and Freeing
+
+| Function | Description |
+|---|---|
+| `vici_res_t* vici_submit(vici_req_t *req, vici_conn_t *conn)` | Submit the request and wait for a response. The `req` is consumed and freed. Returns `NULL` on error (`errno` set). |
+| `void vici_free_req(vici_req_t *req)` | Free a request that was never submitted. |
+| `void vici_free_res(vici_res_t *res)` | Free a response message. Do not call from within an event callback. |
+
+### Parsing Responses
+
+| Function | Description |
+|---|---|
+| `vici_parse_t vici_parse(vici_res_t *res)` | Advance the parser and return the type of the next element (`VICI_PARSE_BEGIN_SECTION`, `VICI_PARSE_KEY_VALUE`, `VICI_PARSE_END`, etc.). |
+| `char* vici_parse_name(vici_res_t *res)` | Return the name of the most recently parsed element (valid after `KEY_VALUE`, `BEGIN_SECTION`, or `BEGIN_LIST`). |
+| `int vici_parse_name_eq(vici_res_t *res, char *name)` | Return 1 if the parsed element's name equals `name`, 0 otherwise. |
+| `void* vici_parse_value(vici_res_t *res, int *len)` | Return the raw value blob of the most recently parsed element. |
+| `char* vici_parse_value_str(vici_res_t *res)` | Return the value as a NUL-terminated string. Fails with `EBADMSG` if the value contains non-printable bytes. |
+| `int vici_parse_cb(vici_res_t *res, section_cb, kv_cb, li_cb, user)` | Parse a complete message, invoking typed callbacks for sections, key/value pairs, and list items at the current section depth. Any callback may be `NULL` to skip that type. |
+| `char* vici_find_str(vici_res_t *res, char *def, char *fmt, ...)` | Find a string value by dot-separated key path. Returns `def` if not found. |
+| `int vici_find_int(vici_res_t *res, int def, char *fmt, ...)` | Find an integer value by dot-separated key path. Returns `def` if not found. |
+| `void* vici_find(vici_res_t *res, int *len, char *fmt, ...)` | Find a raw blob value by dot-separated key path. |
+| `int vici_dump(vici_res_t *res, char *label, int pretty, FILE *out)` | Dump a human-readable representation of the message to a `FILE` stream. |
+
+### Event Subscriptions
+
+| Function | Description |
+|---|---|
+| `int vici_register(vici_conn_t *conn, char *name, vici_event_cb_t cb, void *user)` | Register `cb` to be called for each event of the given `name`. Pass `cb = NULL` to unregister. Returns 0 on success. |
+| `void vici_on_close(vici_conn_t *conn, vici_close_cb_t cb, void *user)` | Register a callback invoked when the vici service closes the connection. Useful when blocked in `vici_register()` listening for events. |
+
+<Note>
+Full Doxygen API documentation is generated from `libvici.h` when building strongSwan with documentation enabled.
+</Note>

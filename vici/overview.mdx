@@ -1,0 +1,95 @@
+---
+title: "VICI Overview"
+description: "The Versatile IKE Control Interface for programmatic control of the charon daemon."
+---
+
+The **VICI** (Versatile IKE Control Interface, pronounced _[ˈvitʃi]_) protocol is a stable IPC interface for configuring, monitoring, and controlling the strongSwan **charon** IKE daemon. The `swanctl` command-line tool uses VICI internally, and developers can use the same interface to build custom management tools, automation pipelines, or monitoring integrations.
+
+## How VICI works
+
+VICI is a request/response and event protocol running over a reliable stream transport. You connect a client to the VICI socket, exchange commands and responses, and optionally register for asynchronous event streams.
+
+```
+  Your application
+       │
+       │ Unix socket (or TCP)
+       ▼
+  /var/run/charon.vici
+       │
+       ▼
+  charon daemon (vici plugin)
+```
+
+### Socket location
+
+By default, charon exposes a Unix domain socket at `/var/run/charon.vici`. TCP connectivity is also supported for remote management use cases.
+
+On Windows, the Python client connects to `127.0.0.1:4502` by default.
+
+## Interaction models
+
+VICI supports three interaction patterns:
+
+| Pattern | Description |
+|---------|-------------|
+| **Request / response** | Client sends a named command; daemon replies with a response message |
+| **Streamed events** | Client registers for an event, issues a command, and receives a stream of event messages before the final response |
+| **Async events** | Client registers for events that are fired independently of any command (e.g., `ike-updown`, `log`) |
+
+<Note>
+Only one command can be active at a time on a single connection. There is no sequence number — commands must be strictly serialized.
+</Note>
+
+## Primary use case: swanctl
+
+`swanctl` is the official strongSwan command-line tool and uses VICI for all operations — loading connections, initiating SAs, querying status, and managing credentials. You can replicate any `swanctl` operation programmatically via VICI.
+
+## Use cases for direct VICI access
+
+- **Automated provisioning** — dynamically load and unload connections without touching config files
+- **Custom monitoring** — subscribe to `ike-updown` and `child-updown` events to track tunnel state
+- **Management UIs** — query SA state and statistics from a web dashboard
+- **Integration testing** — drive the daemon from test harnesses
+- **Scripted deployments** — orchestrate multi-gateway setups from CI/CD pipelines
+
+## Client libraries
+
+Strongswan ships client libraries for four languages:
+
+<CardGroup cols={2}>
+  <Card title="libvici (C)" icon="c" href="/vici/clients/libvici-c">
+    The reference C client library. Builds on libstrongswan with a stable, MIT-licensed API.
+  </Card>
+  <Card title="Python vici module" icon="python" href="/vici/clients/python">
+    Pure Python implementation. Returns OrderedDicts and generators for streamed events.
+  </Card>
+  <Card title="Ruby vici gem" icon="gem" href="/vici/clients/ruby">
+    Pure Ruby implementation. The `Vici::Connection` class provides high-level command methods.
+  </Card>
+  <Card title="Perl Vici::Session" icon="code" href="/vici/clients/perl">
+    Pure Perl CPAN module. Uses `Vici::Message` for encoding and decoding message data.
+  </Card>
+</CardGroup>
+
+## Protocol reference
+
+<CardGroup cols={2}>
+  <Card title="Protocol specification" icon="network-wired" href="/vici/protocol">
+    Transport framing, packet types, message format, and binary encoding.
+  </Card>
+  <Card title="Connection management" icon="plug" href="/vici/commands/connection-management">
+    Load, unload, and query VPN connection definitions.
+  </Card>
+  <Card title="SA management" icon="shield" href="/vici/commands/sa-management">
+    Initiate, terminate, rekey, and list Security Associations.
+  </Card>
+  <Card title="Credential management" icon="key" href="/vici/commands/credential-management">
+    Load certificates, private keys, tokens, and shared secrets.
+  </Card>
+  <Card title="Query & status commands" icon="chart-bar" href="/vici/commands/query-commands">
+    Version info, statistics, algorithms, and event counters.
+  </Card>
+  <Card title="SA events" icon="bell" href="/vici/events/sa-events">
+    Events fired when IKE and CHILD SAs change state.
+  </Card>
+</CardGroup>

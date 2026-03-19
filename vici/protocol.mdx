@@ -1,0 +1,170 @@
+---
+title: "VICI Protocol"
+description: "Technical specification of the VICI binary protocol transport and message format."
+---
+
+VICI is a binary IPC protocol layered as: **transport** → **packets** → **messages**. This page describes each layer in detail so you can implement your own client or debug protocol issues.
+
+## Transport layer
+
+VICI runs over any reliable, stream-based transport. The two supported transports are:
+
+- **Unix domain socket** at `/var/run/charon.vici` (default)
+- **TCP socket** for remote management
+
+### Framing
+
+The stream is divided into segments. Each segment is prefixed with a **32-bit length header in network byte order** followed by the segment data. The length field encodes the byte length of the data only — it does not include itself.
+
+```
+ ┌─────────────────────┬──────────────────────────────────┐
+ │  Length (4 bytes,   │  Segment data                    │
+ │  network order)     │  (up to 512 KB)                  │
+ └─────────────────────┴──────────────────────────────────┘
+```
+
+<Warning>
+The maximum segment length is **512 KB** (524,288 bytes). Clients and servers must reject segments that exceed this limit.
+</Warning>
+
+Segments must be delivered and processed in the order they were sent.
+
+## Packet layer
+
+Each transport segment carries exactly one packet. The **first byte** of the segment is the packet type identifier. Remaining bytes are packet-type-specific content.
+
+### Packet types
+
+| Type | Value | Direction | Description |
+|------|-------|-----------|-------------|
+| `CMD_REQUEST` | 0 | Client → Server | Named request message |
+| `CMD_RESPONSE` | 1 | Server → Client | Response to a request |
+| `CMD_UNKNOWN` | 2 | Server → Client | Command name not recognized |
+| `EVENT_REGISTER` | 3 | Client → Server | Register for a named event |
+| `EVENT_UNREGISTER` | 4 | Client → Server | Unregister from a named event |
+| `EVENT_CONFIRM` | 5 | Server → Client | Event (de-)registration succeeded |
+| `EVENT_UNKNOWN` | 6 | Server → Client | Event name not recognized |
+| `EVENT` | 7 | Server → Client | Asynchronous event message |
+
+### Named packets
+
+For packet types that carry a name (`CMD_REQUEST`, `EVENT_REGISTER`, `EVENT_UNREGISTER`, `EVENT`), the name follows the type byte as:
+
+```
+ ┌──────────┬───────────────┬──────────────────┐
+ │ Type (1B)│ Name len (1B) │ Name (ASCII)     │
+ └──────────┴───────────────┴──────────────────┘
+```
+
+The name is ASCII, not null-terminated. The length field does not include itself.
+
+### Commands
+
+Commands are always initiated by the client. The server replies with `CMD_RESPONSE` or `CMD_UNKNOWN`. There is no sequence number, so **only one command may be active at a time** on a single connection.
+
+### Events
+
+To receive events, the client sends `EVENT_REGISTER` with the event name. The server responds with `EVENT_CONFIRM` (success) or `EVENT_UNKNOWN` (no such event). To stop receiving events, the client sends `EVENT_UNREGISTER`.
+
+Events may arrive at any time while registered, **including during an active command**. This is how streaming commands work: a client registers for the event, issues the command, receives a stream of `EVENT` packets, and finally receives `CMD_RESPONSE` to signal completion.
+
+<Note>
+For streaming commands like `list-sas` or `list-conns`, always register for the associated event **before** sending the command, and unregister **after** receiving the final `CMD_RESPONSE`.
+</Note>
+
+## Message format
+
+Both `CMD_REQUEST`, `CMD_RESPONSE`, and `EVENT` packets may carry a **message** — a hierarchical tree of sections, key/value pairs, and lists.
+
+A message is a flat byte sequence of typed elements. The message length is determined by the enclosing transport segment length minus the packet type and name tag overhead.
+
+### Element types
+
+| Type | Value | Has name? | Has value? | Encoding |
+|------|-------|-----------|------------|----------|
+| `SECTION_START` | 1 | Yes | No | 8-bit length + ASCII name |
+| `SECTION_END` | 2 | No | No | none |
+| `KEY_VALUE` | 3 | Yes | Yes | 8-bit name length + ASCII name + 16-bit value length + raw bytes |
+| `LIST_START` | 4 | Yes | No | 8-bit length + ASCII name |
+| `LIST_ITEM` | 5 | No | Yes | 16-bit value length + raw bytes |
+| `LIST_END` | 6 | No | No | none |
+
+**Names** use an 8-bit length prefix and are ASCII strings (not null-terminated).
+
+**Values** use a 16-bit network-order length prefix and are raw byte blobs. The vici plugin currently uses only non-null-terminated strings as values; numbers are encoded as decimal strings.
+
+### Structure rules
+
+- Sections may be nested to any depth. `SECTION_START` and `SECTION_END` must be balanced.
+- Key/value pairs may appear in any section (including root) but not inside lists.
+- Lists may appear at the same positions as key/values, but may not be nested.
+- Only one list may be open at a time. After `LIST_START`, only `LIST_ITEM` elements may appear until `LIST_END`.
+- Empty lists are valid.
+
+### Encoding example
+
+Consider this logical structure:
+
+```
+key1 = value1
+section1 = {
+    sub-section = {
+        key2 = value2
+    }
+    list1 = [ item1, item2 ]
+}
+```
+
+This encodes as the following byte sequence:
+
+```c
+char msg[] = {
+    /* key1 = value1 */
+    3, 4,'k','e','y','1', 0,6,'v','a','l','u','e','1',
+    /* section1 */
+    1, 8,'s','e','c','t','i','o','n','1',
+    /* sub-section */
+    1, 11,'s','u','b','-','s','e','c','t','i','o','n',
+    /* key2 = value2 */
+    3, 4,'k','e','y','2', 0,6,'v','a','l','u','e','2',
+    /* sub-section end */
+    2,
+    /* list1 */
+    4, 5, 'l','i','s','t','1',
+    /* item1 */
+    5, 0,5,'i','t','e','m','1',
+    /* item2 */
+    5, 0,5,'i','t','e','m','2',
+    /* list1 end */
+    6,
+    /* section1 end */
+    2,
+};
+```
+
+Breaking down the first element (`KEY_VALUE`):
+- `3` — element type KEY_VALUE
+- `4` — name length (4 bytes: `key1`)
+- `'k','e','y','1'` — name
+- `0,6` — 16-bit value length = 6
+- `'v','a','l','u','e','1'` — value
+
+## Streaming command sequence
+
+The following sequence diagram shows how a streaming command like `list-sas` works:
+
+```
+Client                          Server
+  │                               │
+  │── EVENT_REGISTER(list-sa) ──►│
+  │◄─ EVENT_CONFIRM ─────────────│
+  │                               │
+  │── CMD_REQUEST(list-sas) ────►│
+  │◄─ EVENT(list-sa, data1) ──── │
+  │◄─ EVENT(list-sa, data2) ──── │
+  │      ... more events ...      │
+  │◄─ CMD_RESPONSE({}) ──────────│
+  │                               │
+  │── EVENT_UNREGISTER(list-sa) ►│
+  │◄─ EVENT_CONFIRM ─────────────│
+```

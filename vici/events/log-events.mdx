@@ -1,0 +1,157 @@
+---
+title: "Log Events"
+description: "VICI events for receiving daemon log messages in real time."
+---
+
+The daemon can deliver log messages directly to VICI clients. Two event types are available: `log` for general debug output and `control-log` for log messages tied to a specific `initiate` or `terminate` command.
+
+## log
+
+Fired for each debug log message at level 0 or 1. This event is not associated with any command — it fires continuously for the lifetime of the registration.
+
+<ResponseField name="group" type="string">
+  Subsystem identifier for the debug message (e.g., `IKE`, `CFG`, `ESP`, `NET`). Corresponds to the log groups configurable in `strongswan.conf`.
+</ResponseField>
+
+<ResponseField name="level" type="string">
+  Log level: `0` (errors and warnings) or `1` (informational).
+</ResponseField>
+
+<ResponseField name="thread" type="string">
+  Numeric thread identifier of the thread that issued the log message.
+</ResponseField>
+
+<ResponseField name="ikesa-name" type="string">
+  Name of the IKE_SA associated with this log message, if any.
+</ResponseField>
+
+<ResponseField name="ikesa-uniqueid" type="string">
+  Unique identifier of the IKE_SA associated with this log message, if any.
+</ResponseField>
+
+<ResponseField name="msg" type="string">
+  Log message text.
+</ResponseField>
+
+<Note>
+The `log` event only delivers messages at level 0–1. For higher verbosity (levels 2–4), use `control-log` during an active `initiate` or `terminate` command.
+</Note>
+
+---
+
+## control-log
+
+Fired for log messages generated during an active `initiate` or `terminate` command. Only sent to the client that issued the command. Supports higher log levels than the general `log` event.
+
+<ResponseField name="group" type="string">
+  Subsystem identifier for the debug message.
+</ResponseField>
+
+<ResponseField name="level" type="string">
+  Log level: `0`–`4` (verbose debug).
+</ResponseField>
+
+<ResponseField name="ikesa-name" type="string">
+  Name of the IKE_SA associated with this log message, if any.
+</ResponseField>
+
+<ResponseField name="ikesa-uniqueid" type="string">
+  Unique identifier of the IKE_SA associated with this log message, if any.
+</ResponseField>
+
+<ResponseField name="msg" type="string">
+  Log message text.
+</ResponseField>
+
+<Note>
+The `control-log` event is automatically managed by the Python, Ruby, and Perl client libraries when you call `initiate()` or `terminate()`. You only need to register manually when using the raw protocol or the C libvici API.
+</Note>
+
+---
+
+## Subscribing to log events in Python
+
+Use `Session.listen()` to register for one or more event types and iterate over incoming messages:
+
+```python
+import vici
+import socket
+
+s = socket.socket(socket.AF_UNIX)
+s.connect("/var/run/charon.vici")
+v = vici.Session(s)
+
+# Stream log events until interrupted
+for event_type, event in v.listen(["log"]):
+    if event is not None:
+        print("[{group}:{level}] {msg}".format(
+            group=event[b"group"].decode(),
+            level=event[b"level"].decode(),
+            msg=event[b"msg"].decode(),
+        ))
+```
+
+To subscribe to multiple event types simultaneously:
+
+```python
+for event_type, event in v.listen(["log", "ike-updown", "child-updown"]):
+    if event is not None:
+        print(event_type, event)
+```
+
+`listen()` accepts an optional `timeout` parameter (in fractions of a second). When the timeout elapses with no event, the generator yields `(None, None)`, letting you perform periodic tasks or check a stop condition:
+
+```python
+import time
+
+deadline = time.time() + 30
+for event_type, event in v.listen(["log"], timeout=1.0):
+    if time.time() > deadline:
+        break
+    if event is not None:
+        print(event[b"msg"].decode())
+```
+
+---
+
+## Streaming logs with swanctl
+
+The `swanctl` tool exposes log streaming via its `--log` subcommand:
+
+```bash
+swanctl --log
+```
+
+This registers for the `log` event and prints messages to stdout until you press Ctrl+C. It is equivalent to the Python `listen(["log"])` loop above.
+
+---
+
+## Log groups reference
+
+The `group` field in log events corresponds to the subsystem identifiers used in `strongswan.conf` logging configuration:
+
+| Group | Subsystem |
+|-------|-----------|
+| `ANY` | All subsystems |
+| `DMN` | Daemon-level messages |
+| `MGR` | IKE_SA manager |
+| `IKE` | IKE_SA messages |
+| `CHD` | CHILD_SA messages |
+| `JOB` | Job processing |
+| `CFG` | Configuration subsystem |
+| `KNL` | Kernel interface |
+| `NET` | Network I/O |
+| `ASN` | ASN.1 encoding/decoding |
+| `ENC` | Message encoding/decoding |
+| `TNC` | Trusted Network Connect |
+| `IMC` | Integrity Measurement Collector |
+| `IMV` | Integrity Measurement Verifier |
+| `PT`  | PT (PB-TNC protocol) |
+| `TLS` | TLS subsystem |
+| `APP` | Application-level |
+| `ESP` | ESP/IPsec processing |
+| `LIB` | libstrongswan |
+
+<Note>
+Configure per-group log levels in `strongswan.conf` under `charon.syslog` or `charon.filelog`. The `log` VICI event reflects the effective log output, so it only delivers messages that pass the configured level filter.
+</Note>

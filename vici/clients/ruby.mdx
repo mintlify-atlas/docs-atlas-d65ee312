@@ -1,0 +1,149 @@
+---
+title: "Ruby vici Gem"
+description: "Pure Ruby implementation of the VICI protocol for strongSwan management"
+---
+
+## Overview
+
+The `vici` Ruby gem is a pure-Ruby implementation of the VICI protocol. It lives in the `ruby/` subdirectory of the vici plugin source tree. The `Vici::Connection` class provides the high-level interface; the underlying `Vici::Transport` and `Vici::Message` classes handle protocol framing and are not required for typical applications.
+
+## Installation
+
+The gem is built and installed when strongSwan is configured with:
+
+```sh
+./configure --enable-vici --enable-ruby-gems
+```
+
+## Connecting to the Daemon
+
+Create a `UNIXSocket` and pass it to `Vici::Connection.new`. If no socket is provided, the constructor opens `/var/run/charon.vici` automatically.
+
+```ruby
+require "vici"
+require "socket"
+
+v = Vici::Connection.new(UNIXSocket.new("/var/run/charon.vici"))
+```
+
+## A Simple Request
+
+Commands that return a single Hash are called as plain methods. The `version` method returns daemon and system information:
+
+```ruby
+x = v.version
+puts "%s %s (%s, %s, %s)" % [
+    x["daemon"], x["version"], x["sysname"], x["release"], x["machine"]
+]
+```
+
+## Streaming Responses with Closures
+
+Commands that stream multiple results accept a block. The block is invoked once per event with the event's Hash payload. The following example lists all loaded connections:
+
+```ruby
+v.list_conns { |conn|
+    conn.each { |key, value|
+        puts key
+    }
+}
+```
+
+The `list_sas` method works the same way:
+
+```ruby
+v.list_sas { |sa|
+    sa.each { |name, details|
+        puts name
+    }
+}
+```
+
+## Initiating a Connection
+
+Commands that both accept parameters and stream log output also take a block:
+
+```ruby
+v.initiate({ "child" => "net-net" }) { |log|
+    puts log["msg"]
+}
+```
+
+## Listening for Events
+
+Use `listen_events` to register for one or more arbitrary event types. The block receives the event name and the event message Hash. Raise `Vici::StopEventListening` from within the block to stop:
+
+```ruby
+v.listen_events(["log", "ike-updown"]) { |event, message|
+    puts "#{event}: #{message}"
+    raise Vici::StopEventListening if some_condition
+}
+```
+
+## Data Types
+
+The gem converts VICI binary messages to and from native Ruby objects:
+
+| VICI type | Ruby type |
+|---|---|
+| Section | `Hash` |
+| Key/Value | `String` (Hash value) |
+| List | `Array` of `String` |
+
+Non-String values that are neither a `Hash` nor an `Array` are converted using `.to_s` during encoding.
+
+## Exception Hierarchy
+
+All gem-specific exceptions inherit from `Vici::Error`:
+
+| Exception | Description |
+|---|---|
+| `Vici::ParseError` | Error parsing a message received from the daemon. |
+| `Vici::EncodeError` | Error encoding a Ruby data structure into a vici message. |
+| `Vici::TransportError` | Error exchanging messages over the transport layer. |
+| `Vici::CommandUnknownError` | The daemon does not know the issued command. |
+| `Vici::CommandExecError` | The daemon rejected the command (e.g. `success = no`). |
+| `Vici::EventUnknownError` | Attempted to register for an unknown event type. |
+| `Vici::StopEventListening` | Raise from a `listen_events` block to stop listening. |
+
+## Available Connection Methods
+
+| Method | Description |
+|---|---|
+| `version` | Daemon and system version information. |
+| `stats` | IKE daemon statistics and load information. |
+| `reload_settings` | Reload `strongswan.conf` and plugins that support reload. |
+| `initiate(options, &block)` | Initiate an SA; block receives `control-log` events. |
+| `terminate(options, &block)` | Terminate an SA; block receives `control-log` events. |
+| `rekey(options)` | Initiate rekeying of an SA. |
+| `redirect(options)` | Redirect an IKE_SA. |
+| `install(policy)` | Install a trap, drop or bypass policy. |
+| `uninstall(policy)` | Uninstall a policy. |
+| `list_sas(match, &block)` | Stream active IKE_SAs and CHILD_SAs. |
+| `list_policies(match, &block)` | Stream installed trap, drop and bypass policies. |
+| `list_conns(match, &block)` | Stream loaded connection configurations. |
+| `get_conns` | Names of connections loaded exclusively over vici. |
+| `list_certs(match, &block)` | Stream loaded certificates. |
+| `list_authorities(match, &block)` | Stream loaded CA definitions. |
+| `get_authorities` | Names of CAs loaded exclusively over vici. |
+| `load_conn(conn)` | Load a connection definition into the daemon. |
+| `unload_conn(conn)` | Unload a connection definition by name. |
+| `load_cert(cert)` | Load a PEM or DER certificate. |
+| `load_key(key)` | Load a PEM or DER private key. |
+| `unload_key(key)` | Unload a private key. |
+| `get_keys` | Identifiers of private keys loaded over vici. |
+| `load_token(token)` | Load a private key from a hardware token. |
+| `load_shared(shared)` | Load a shared PSK, EAP or XAuth secret. |
+| `unload_shared(shared)` | Unload a shared secret. |
+| `get_shared` | Unique identifiers of shared secrets loaded over vici. |
+| `flush_certs(match)` | Flush the volatile certificate cache. |
+| `clear_creds` | Clear all credentials loaded over vici. |
+| `load_authority(authority)` | Load a CA definition. |
+| `unload_authority(authority)` | Unload a CA definition by name. |
+| `load_pool(pool)` | Load a virtual IP and attribute pool. |
+| `unload_pool(pool)` | Unload a virtual IP pool. |
+| `get_pools(options)` | List currently loaded pools. |
+| `get_algorithms` | Currently loaded algorithms and their implementations. |
+| `get_counters(options)` | Global or per-connection IKE event counters. |
+| `reset_counters(options)` | Reset IKE event counters. |
+| `listen_events(events, &block)` | Register and block on arbitrary events; block receives `(event_name, message_hash)`. |

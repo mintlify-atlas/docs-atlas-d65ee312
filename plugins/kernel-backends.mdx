@@ -1,0 +1,179 @@
+---
+title: "Kernel Backends"
+description: "Kernel integration plugins for installing IPsec SAs and routing policies into the operating system"
+---
+
+Kernel backend plugins are responsible for installing IPsec Security Associations (SAs) and Security Policies (SPs) into the operating system, and for managing routes for tunneled traffic. Exactly one kernel interface plugin must be loaded at runtime.
+
+## Available kernel plugins
+
+| Plugin | Platform | Interface | Notes |
+|--------|----------|-----------|-------|
+| `kernel-netlink` | Linux | XFRM via Netlink | Default for Linux; supports XFRM interfaces |
+| `kernel-pfkey` | Linux, BSD | PF_KEY socket | Legacy Linux; native on BSD kernels |
+| `kernel-pfroute` | FreeBSD, macOS | PF_ROUTE socket | Handles routing on BSD; used alongside `kernel-pfkey` |
+| `kernel-libipsec` | Any | User-space libipsec | Software IPsec via TUN device; no XFRM required |
+| `kernel-iph` | Windows | IP Helper API | SA/SP management on Windows |
+| `kernel-wfp` | Windows | Windows Filtering Platform | Policy enforcement on Windows |
+
+## kernel-netlink (Linux)
+
+`kernel-netlink` is the standard plugin for Linux. It communicates with the kernel's XFRM framework via Netlink sockets to install `xfrm_state` (SAs) and `xfrm_policy` (SPs).
+
+### XFRM interfaces
+
+XFRM interfaces (available since Linux 4.19) provide a virtual network interface for IPsec traffic, avoiding the need for route-based workarounds. Configure them in `swanctl.conf` using `if_id_in` and `if_id_out`:
+
+```conf swanctl.conf
+connections {
+  example {
+    if_id_in  = 10
+    if_id_out = 10
+    children {
+      net {
+        # traffic selectors ...
+      }
+    }
+  }
+}
+```
+
+To also install routes for SAs that reference XFRM interfaces, set `install_routes_xfrmi = yes` in the plugin configuration:
+
+```conf /etc/strongswan.d/charon/kernel-netlink.conf
+plugins {
+  kernel-netlink {
+    load = yes
+    install_routes_xfrmi = yes
+  }
+}
+```
+
+### Firewall marks
+
+Use `fwmark` to direct traffic to a specific routing table while exempting IKE traffic:
+
+```conf /etc/strongswan.d/charon/kernel-netlink.conf
+plugins {
+  kernel-netlink {
+    load = yes
+    fwmark = !0x42   # Apply routing rule to packets NOT marked 0x42
+  }
+}
+```
+
+### Key configuration options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `fwmark` | — | Firewall mark on the routing rule (format: `[!]mark[/mask]`) |
+| `install_routes_xfrmi` | `no` | Install routes for SAs using XFRM interfaces |
+| `mtu` | `0` | MTU on installed routes (0 = kernel default) |
+| `mss` | `0` | MSS clamping on installed routes (0 = disabled) |
+| `roam_events` | `yes` | Trigger roam events on interface/address/route changes |
+| `receive_buffer_size` | `8388608` | Netlink socket receive buffer (bytes) |
+| `xfrm_acq_expires` | `165` | Lifetime of XFRM acquire state (seconds) |
+| `port_bypass` | `no` | Use port-based instead of socket-based IKE bypass policies |
+
+## kernel-pfkey (BSD / legacy Linux)
+
+`kernel-pfkey` uses the PF_KEY socket interface (RFC 2367) to manage SAs. On Linux it is superseded by `kernel-netlink` but remains useful for BSD kernels.
+
+On FreeBSD and macOS, load `kernel-pfkey` together with `kernel-pfroute`:
+
+<Tabs>
+  <Tab title="FreeBSD / macOS strongswan.conf">
+```conf strongswan.conf
+charon {
+  load_modular = yes
+}
+```
+
+```conf /etc/strongswan.d/charon/kernel-pfkey.conf
+plugins {
+  kernel-pfkey {
+    load = yes
+    route_via_internal = no
+  }
+}
+```
+
+```conf /etc/strongswan.d/charon/kernel-pfroute.conf
+plugins {
+  kernel-pfroute {
+    load = yes
+    mtu = 1400
+  }
+}
+```
+  </Tab>
+</Tabs>
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `route_via_internal` | `no` | Route via the internal (traffic selector) interface rather than the external interface |
+| `events_buffer_size` | `0` | Receive buffer size for the event socket (0 = OS default) |
+
+## kernel-pfroute (FreeBSD / macOS)
+
+`kernel-pfroute` handles routing table management on BSD-family systems using the PF_ROUTE socket. It is always paired with `kernel-pfkey`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mtu` | `1400` | MTU set on TUN devices created for virtual IPs |
+| `vip_wait` | `1000` | Milliseconds to wait for virtual IP addresses to appear or disappear |
+
+## kernel-libipsec (user-space)
+
+`kernel-libipsec` implements IPsec entirely in user space using strongSwan's `libipsec` library. It creates a TUN device and performs ESP encapsulation/decapsulation without involving the kernel XFRM or PF_KEY interfaces.
+
+This is the appropriate choice for:
+
+- Android (XFRM not available to unprivileged apps)
+- Platforms without kernel IPsec support
+- Testing and development environments
+
+<Warning>
+User-space IPsec has lower throughput than kernel-based implementations. Do not use `kernel-libipsec` in performance-sensitive production deployments on Linux unless XFRM is unavailable.
+</Warning>
+
+```conf /etc/strongswan.d/charon/kernel-libipsec.conf
+plugins {
+  kernel-libipsec {
+    load = yes
+    allow_peer_ts = no   # Disallow TS that equals the IKE peer (avoids routing loops)
+    raw_esp = no          # Use UDP encapsulation even without NAT
+  }
+}
+```
+
+`kernel-libipsec` still requires a routing plugin. On Linux, load it alongside `kernel-netlink` (which handles routes only, not SAs).
+
+## Choosing a kernel plugin
+
+<Tabs>
+  <Tab title="Linux (typical)">
+```conf strongswan.conf
+charon {
+  # kernel-netlink handles both SAs and routing
+  load = ... kernel-netlink ...
+}
+```
+  </Tab>
+  <Tab title="Linux (user-space IPsec)">
+```conf strongswan.conf
+charon {
+  # kernel-libipsec for SAs, kernel-netlink for routing only
+  load = ... kernel-netlink kernel-libipsec ...
+}
+```
+  </Tab>
+  <Tab title="FreeBSD / macOS">
+```conf strongswan.conf
+charon {
+  # pfkey for SAs, pfroute for routing
+  load = ... kernel-pfkey kernel-pfroute ...
+}
+```
+  </Tab>
+</Tabs>

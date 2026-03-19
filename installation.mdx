@@ -1,0 +1,200 @@
+---
+title: Installation
+description: Install strongSwan on Linux via distribution packages or build from source.
+---
+
+strongSwan can be installed from pre-built packages available in most major Linux distributions, or compiled from source for full control over enabled features.
+
+## Install from packages
+
+<Tabs>
+  <Tab title="Ubuntu/Debian">
+    The `strongswan-swanctl` package provides the modern `swanctl` interface and the `charon-systemd` daemon:
+
+    ```bash
+    apt install charon-systemd strongswan-swanctl
+    ```
+
+    Alternatively, install the full `strongswan` meta-package which includes the legacy `ipsec` command as well:
+
+    ```bash
+    apt install strongswan
+    ```
+
+    Enable and start the systemd service:
+
+    ```bash
+    systemctl enable --now charon-systemd
+    ```
+  </Tab>
+
+  <Tab title="RHEL/CentOS/Fedora">
+    ```bash
+    dnf install strongswan
+    ```
+
+    Enable and start the systemd service:
+
+    ```bash
+    systemctl enable --now strongswan
+    ```
+  </Tab>
+
+  <Tab title="Arch Linux">
+    ```bash
+    pacman -S strongswan
+    ```
+
+    Enable and start the systemd service:
+
+    ```bash
+    systemctl enable --now strongswan
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Package names and included plugins vary by distribution and release. Check your distribution's documentation for the exact packages available. Distributions that package plugins separately may require installing additional packages for features like EAP-RADIUS or TPM 2.0.
+</Note>
+
+## Build from source
+
+Building from source gives you full control over which plugins and features are compiled in.
+
+### Requirements
+
+At least one cryptographic library is required:
+
+- `libcrypto` (OpenSSL) — recommended
+- `libwolfssl` (wolfSSL)
+- `libbotan` (Botan)
+- `libgmp` (GNU MP) — used by default if no other library is specified
+- `libgcrypt` (GNU Crypto)
+
+Install development headers for your chosen library before configuring. For example, on Debian/Ubuntu with OpenSSL:
+
+```bash
+apt install build-essential libssl-dev
+```
+
+### Build steps
+
+<Steps>
+  <Step title="Generate the build system (git checkouts only)">
+    If you cloned the repository from git rather than downloading a release tarball, generate the `configure` script first:
+
+    ```bash
+    ./autogen.sh
+    ```
+
+    Release tarballs already include a pre-generated `configure` script; skip this step.
+  </Step>
+
+  <Step title="Configure the build">
+    Run `./configure` with the features you need. The following example enables `swanctl`, systemd integration, and installs to standard system paths:
+
+    ```bash
+    ./configure \
+      --prefix=/usr \
+      --sysconfdir=/etc \
+      --enable-swanctl \
+      --enable-systemd
+    ```
+
+    See [important configure options](#important-configure-options) below for a list of commonly used flags.
+  </Step>
+
+  <Step title="Compile and install">
+    ```bash
+    make && make install
+    ```
+
+    Installation requires root privileges. Use `sudo make install` if not running as root.
+  </Step>
+
+  <Step title="Enable the service">
+    After installation, enable the systemd service:
+
+    ```bash
+    systemctl enable --now strongswan
+    ```
+
+    If you compiled with `--enable-systemd`, use the `charon-systemd` unit instead:
+
+    ```bash
+    systemctl enable --now charon-systemd
+    ```
+  </Step>
+</Steps>
+
+### Important configure options
+
+Run `./configure --help` for the full list. The most commonly used options are:
+
+| Option | Description |
+|--------|-------------|
+| `--enable-swanctl` | Build the `swanctl` tool and VICI plugin (recommended) |
+| `--enable-systemd` | Build `charon-systemd`, a systemd-native IKE daemon |
+| `--enable-eap-radius` | EAP-RADIUS plugin for RADIUS-based authentication |
+| `--enable-ha` | High-availability clustering for active-passive failover |
+| `--enable-tpm` | TPM 2.0 plugin for hardware-backed private key storage |
+| `--enable-curl` | Enable CRL/OCSP fetching via libcurl |
+| `--enable-ldap` | Enable CRL fetching from LDAP servers |
+| `--enable-sqlite` | SQLite database backend for credential storage |
+| `--enable-chapoly` | ChaCha20/Poly1305 AEAD cipher plugin |
+| `--enable-aesni` | Intel AES-NI hardware acceleration plugin |
+| `--sysconfdir=/etc` | Set the system configuration directory |
+| `--prefix=/usr` | Set the installation prefix |
+
+<Warning>
+Disabling plugins that are enabled by default (using `--disable-*` flags) can break standard functionality. Review the plugin list with `./configure --help` before disabling anything.
+</Warning>
+
+## Kernel requirements
+
+strongSwan requires the following Linux kernel modules to be available (built-in or loadable):
+
+```
+esp4          # ESP for IPv4
+esp6          # ESP for IPv6
+xfrm_user     # Netlink interface to XFRM
+```
+
+Modules are loaded automatically on demand by most distributions. To verify they are available:
+
+```bash
+modprobe esp4 esp6 xfrm_user
+```
+
+<Note>
+Linux kernel 4.5 or later is recommended. Older kernels may also require `xfrm4_tunnel` and `xfrm4_mode_tunnel`.
+</Note>
+
+## Directory structure after install
+
+After installation, strongSwan uses the following directories:
+
+```
+/etc/swanctl/              # swanctl credentials and connection config
+├── swanctl.conf           # Main connection and pool definitions
+├── x509ca/                # Trusted CA certificates
+├── x509/                  # End-entity certificates
+├── private/               # Private keys
+├── x509crl/               # Certificate revocation lists
+└── pkcs12/                # PKCS#12 bundles
+
+/etc/strongswan.conf       # Daemon and plugin configuration
+```
+
+The `strongswan.conf` file controls daemon behavior such as logging, plugin loading, and charon tuning. The `swanctl.conf` file defines VPN connections, credentials, and IP pools.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up your first site-to-site VPN tunnel
+  </Card>
+  <Card title="swanctl configuration" icon="gear" href="/configuration/swanctl-conf">
+    Learn the swanctl.conf format for connections, secrets, and pools
+  </Card>
+</CardGroup>
